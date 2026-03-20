@@ -1,0 +1,20 @@
+{
+  "markup_percent": 80,
+  "max_listings_per_search": 5,
+  "your_city_state": "Phoenix, AZ",
+  "your_zip": "85001",
+  "radius_miles": 100,
+  "state": "AZ",
+  "searches": [
+    {"keywords": "", "category": "Vehicles"},
+    {"keywords": "", "category": "Power Sports & Recreational"},
+    {"keywords": "", "category": "Trailers"},
+    {"keywords": "", "category": "Construction & Farm Equipment"},
+    {"keywords": "", "category": "Tools & Equipment"},
+    {"keywords": "", "category": "Electronics & Computers"},
+    {"keywords": "", "category": "Lawn & Garden"},
+    {"keywords": "", "category": "Generators & Power Equipment"},
+    {"keywords": "", "category": "Medical Equipment"},
+    {"keywords": "", "category": "Office Equipment & Furniture"}
+  ]
+}

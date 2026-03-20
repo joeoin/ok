@@ -1,27 +1,28 @@
 """
 GovDeals Arbitrage Agent
 
-Finds government surplus auction items on GovDeals.com and lists them
-on Facebook Marketplace at 80% markup to test demand before bidding.
+Finds government surplus auction items on GovDeals.com within your area
+and lists them on Facebook Marketplace at 80% markup to test demand before bidding.
 
 Workflow:
-    1. Searches GovDeals.com based on criteria in config.json
-    2. For each item: Facebook price = current_bid x 1.80
-    3. Prints formatted listings (and optionally posts to Facebook Marketplace)
-    4. If people message you on Facebook -> go bid on GovDeals yourself
+    1. Searches GovDeals.com for items near you based on config.json
+    2. Checks approximate market value — skips items where 80% markup
+       would price them above what they actually sell for
+    3. Prints formatted FB Marketplace listings (using GovDeals photos)
+    4. Optionally posts them to Facebook Marketplace via browser automation
+    5. If people message you on Facebook -> go bid on GovDeals yourself
 
 Requirements:
     pip install claude-agent-sdk anyio
     npx @playwright/mcp@latest   (only needed with --post)
 
 Setup:
-    1. Edit config.json with your search criteria and location
+    1. Edit config.json — set your_city_state and your zip code
     2. If using --post, make sure you are logged into Facebook in the browser
 
 Usage:
-    python agent.py                          # Scan GovDeals, print listings
-    python agent.py --post                   # Scan + post to Facebook Marketplace
-    python agent.py --config my_config.json  # Use a different config file
+    python agent.py              # Scan GovDeals, print listings
+    python agent.py --post       # Scan + post to Facebook Marketplace
 """
 
 import anyio
@@ -35,15 +36,19 @@ from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMes
 DEFAULT_CONFIG = {
     "markup_percent": 80,
     "max_listings_per_search": 5,
-    "your_city_state": "Your City, ST",
+    "your_city_state": "Phoenix, AZ",
+    "your_zip": "85001",
+    "radius_miles": 100,
+    "state": "AZ",
     "searches": [
-        {
-            "keywords": "",
-            "category": "Electronics",
-            "state": "",
-            "min_bid": 0,
-            "max_bid": 500
-        }
+        {"keywords": "", "category": "Vehicles"},
+        {"keywords": "", "category": "Power Sports & Recreational"},
+        {"keywords": "", "category": "Trailers"},
+        {"keywords": "", "category": "Construction & Farm Equipment"},
+        {"keywords": "", "category": "Tools & Equipment"},
+        {"keywords": "", "category": "Electronics & Computers"},
+        {"keywords": "", "category": "Lawn & Garden"},
+        {"keywords": "", "category": "Generators & Power Equipment"}
     ]
 }
 
@@ -58,93 +63,133 @@ def load_config(config_path: str) -> dict:
 def build_prompt(config: dict, should_post: bool) -> str:
     markup = config.get("markup_percent", 80)
     multiplier = 1 + markup / 100
-    max_listings = config.get("max_listings_per_search", 5)
-    your_location = config.get("your_city_state", "your city")
+    max_per = config.get("max_listings_per_search", 5)
+    your_location = config.get("your_city_state", "Phoenix, AZ")
+    your_zip = config.get("your_zip", "85001")
+    radius = config.get("radius_miles", 100)
+    state = config.get("state", "AZ")
     searches = config.get("searches", [])
 
-    search_instructions = ""
+    search_lines = ""
     for i, s in enumerate(searches, 1):
-        parts = []
-        if s.get("keywords"):
-            parts.append(f'keywords="{s["keywords"]}"')
-        if s.get("category"):
-            parts.append(f'category={s["category"]}')
-        if s.get("state"):
-            parts.append(f'state={s["state"]}')
-        min_bid = s.get("min_bid", 0)
-        max_bid = s.get("max_bid")
-        if max_bid:
-            parts.append(f'bid range=${min_bid}–${max_bid}')
-        search_instructions += f"  Search {i}: {', '.join(parts)}\n"
+        cat = s.get("category", "All")
+        kw = f'  keywords="{s["keywords"]}"' if s.get("keywords") else ""
+        search_lines += f"  {i}. Category: {cat}{kw}\n"
 
     post_instructions = ""
     if should_post:
-        post_instructions = """
-## STEP 2: Post Each Item to Facebook Marketplace
+        post_instructions = f"""
+## STEP 3: Post Each Approved Item to Facebook Marketplace
 
-For each item, navigate to https://www.facebook.com/marketplace/create/item and:
+For EACH item that passed the value check, post it to Facebook Marketplace:
 
-1. Title        -> paste the FB Marketplace title you prepared
-2. Price        -> enter the FB price (numbers only, no $ sign)
-3. Category     -> pick the closest Facebook Marketplace category
-4. Condition    -> "Used - Good" unless item description says otherwise
-5. Description  -> paste the FB description you prepared
-6. Photos       -> download the first GovDeals photo and upload it
-7. Click "Next" then "Publish"
-8. Wait for the confirmation screen before moving to the next listing
+1. Navigate to https://www.facebook.com/marketplace/create/item
+2. **Photos**: Download each GovDeals photo URL to a temp file, then upload all of them.
+   Use every photo available from the listing — more photos = more buyer trust.
+3. **Title**: Use the FB title you prepared (max 100 chars)
+4. **Price**: FB price as a plain number (no $ sign)
+5. **Category**: Closest Facebook Marketplace category
+6. **Condition**: "Used - Good" unless listing clearly says otherwise
+7. **Description**: Use the FB description you prepared
+8. **Location**: {your_location}
+9. Click "Next" then "Publish"
+10. Wait for the success confirmation before starting the next listing
 
-STOP and notify the user if you are not logged into Facebook.
+STOP immediately and notify the user if you are not logged into Facebook.
+After all postings, print how many were successfully posted.
 """
 
-    return f"""You are a government surplus arbitrage agent. Your goal is to find
-auction items on GovDeals.com and prepare Facebook Marketplace listings so the
-user can gauge demand before deciding whether to bid.
+    return f"""You are a government surplus arbitrage agent. Your job is to find
+auction items on GovDeals.com near {your_location} and list them on Facebook
+Marketplace to test buyer demand — before the user ever spends a dollar bidding.
 
-────────────────────────────────────────
-PRICING RULE
-  Facebook price = current_bid × {multiplier:.2f}   ({markup}% markup)
-  Round to the nearest $5 for clean pricing.
-  If there are zero bids, use the starting bid as the base.
-────────────────────────────────────────
+════════════════════════════════════════
+ PRICING RULE
+   FB price = current_bid × {multiplier:.2f}   ({markup}% markup)
+   Round to the nearest $5.
+   If an item has zero bids, use the starting bid as the base.
+
+ LOCATION FILTER
+   State : {state}
+   Radius: within {radius} miles of zip code {your_zip} ({your_location})
+   Only include items the user can realistically drive to pick up.
+
+ SKIP AN ITEM IF:
+   • The auction ends in less than 24 hours (not enough time to gauge FB interest)
+   • The item requires shipping only (no local pickup available)
+   • The {markup}% markup price is ABOVE typical resale value (see Step 2)
+════════════════════════════════════════
 
 ## STEP 1: Scrape GovDeals.com
 
-Visit https://www.govdeals.com/en and run each of these searches:
+Visit https://www.govdeals.com/en and search for items in {state} (radius {radius} miles
+from {your_zip}) across these categories:
 
-{search_instructions}
-For each search collect up to {max_listings} items. For every item extract:
+{search_lines}
+Collect up to {max_per} candidate items per category. For each item record:
+  • Full title
+  • Lot number
+  • Current bid (or starting bid if no bids yet)
+  • Number of bids so far
+  • Auction end date/time
+  • Pickup city and state
+  • ALL photo URLs from the listing
+  • Item condition / notes (mileage, hours, damage, etc.)
+  • Direct GovDeals listing URL
 
-  • Title           - full item name
-  • Lot number      - GovDeals lot / item ID
-  • Current bid     - highest bid so far (or starting bid if no bids yet)
-  • Auction end     - date and time the auction closes
-  • Pickup location - city and state where the item must be collected
-  • Condition notes - any damage, mileage, hours, or condition info in the listing
-  • Photo URL       - URL of the first/main photo
-  • GovDeals URL    - direct link to the listing
+────────────────────────────────────────────────────────────────
+## STEP 2: Market Value Check (skip overpriced items)
 
-Then calculate the Facebook price and format each item like this:
+For each candidate, do a quick WebSearch:
+  "{item name} used resale value" OR "{item name} for sale site:facebook.com"
+  OR "{item name} eBay sold listings"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Estimate the typical used resale price. Then apply the rule:
+
+  ✅ KEEP   — if FB price ({markup}% markup on current bid) is BELOW typical resale
+  ❌ SKIP   — if FB price is already AT or ABOVE typical resale (no room for profit)
+
+Example: John Deere Gator 4x2 current bid $500 → FB price $900.
+  Typical resale ~$3,000–$5,000. FB price is well below market → KEEP ✅
+
+Only proceed to listing format for KEPT items.
+────────────────────────────────────────────────────────────────
+
+## STEP 3: Format Each Kept Item
+
+Print each item in this format:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ITEM            : [full title]
 LOT #           : [lot number]
 GOVDEALS LINK   : [URL]
-CURRENT BID     : $[amount]
-FB PRICE        : $[calculated price]
+CURRENT BID     : $[amount]  ([# bids] bids)
 AUCTION ENDS    : [date/time]
 PICKUP LOCATION : [city, state]
+EST. RESALE     : $[typical market value]
+FB PRICE        : $[calculated price]  ← {markup}% markup on current bid
+VERDICT         : ✅ WORTH LISTING  (FB price is $X below market)
+PHOTOS          : [list all photo URLs]
 
-FB MARKETPLACE LISTING
-  Title       : [catchy title, max 100 characters]
-  Price       : $[FB price]
-  Category    : [Facebook Marketplace category]
-  Description :
-    [2-3 sentences: what it is, key specs/condition, why it is a good deal.
-     End with: "Local pickup — {your_location}. Message me for details."]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+── Facebook Marketplace Listing ──
+Title       : [brand + item + key spec, max 100 chars]
+Price       : $[FB price]
+Category    : [FB Marketplace category]
+Condition   : [Used - Good / Used - Fair / etc.]
+Description :
+  [Sentence 1: what it is and key specs (year, model, hours/miles if known).]
+  [Sentence 2: condition summary from the listing.]
+  [Sentence 3: why this is a deal — mention government surplus if relevant.]
+  Local pickup only — {your_location}. Message me for more details and photos.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {post_instructions}
-After all items, print a one-line summary:
-  "Found X items across Y searches. FB prices range from $A to $B."
+## Final Summary
+
+Print one line per item:
+  [✅/❌] Item name | Bid: $X | FB Price: $Y | Est. Market: $Z | Ends: [date]
+
+Then print totals:
+  "Scanned: X items  |  Worth listing: Y  |  Skipped (overpriced): Z"
 """
 
 
@@ -161,15 +206,18 @@ async def main() -> None:
         if idx + 1 < len(args):
             config_path = args[idx + 1]
 
-    # First run: create default config and exit
     if not os.path.exists(config_path):
         with open(config_path, "w") as f:
             json.dump(DEFAULT_CONFIG, f, indent=2)
-        print("Created config.json — edit it with your search criteria, then run again.")
-        print("  your_city_state  : where you are located (for FB listings)")
-        print("  searches         : list of GovDeals searches to run")
-        print("  markup_percent   : how much to mark up (default 80)")
-        print("  max_listings_per_search : max items per search (default 5)")
+        print("Created config.json")
+        print()
+        print("Before running, open config.json and update:")
+        print("  your_city_state  — your city and state  (e.g. 'Tucson, AZ')")
+        print("  your_zip         — your ZIP code        (e.g. '85701')")
+        print("  radius_miles     — pickup radius        (default 100)")
+        print()
+        print("Then run:  python agent.py")
+        print("     or:   python agent.py --post   (to also post to Facebook)")
         sys.exit(0)
 
     should_post = "--post" in args
@@ -184,14 +232,14 @@ async def main() -> None:
 
     markup = config.get("markup_percent", 80)
     searches = config.get("searches", [])
+    radius = config.get("radius_miles", 100)
 
     print("GovDeals Arbitrage Agent")
     print("=" * 60)
-    print(f"Config         : {config_path}")
-    print(f"Markup         : {markup}%  (FB price = bid × {1 + markup/100:.2f})")
-    print(f"Searches       : {len(searches)}")
-    print(f"Your location  : {config.get('your_city_state', 'not set')}")
-    print(f"Mode           : {'SCAN + POST to Facebook Marketplace' if should_post else 'SCAN ONLY (add --post to post to Facebook)'}")
+    print(f"Location       : {config.get('your_city_state')}  (ZIP {config.get('your_zip')})  within {radius} miles")
+    print(f"Markup         : {markup}%  →  FB price = bid × {1 + markup/100:.2f}")
+    print(f"Categories     : {len(searches)}")
+    print(f"Mode           : {'SCAN + POST to Facebook Marketplace' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
     print("=" * 60)
 
     async for message in query(
