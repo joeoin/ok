@@ -1,0 +1,28 @@
+{
+  "markup_percent": 80,
+  "max_listings_per_search": 5,
+  "your_city_state": "Houston, TX",
+  "searches": [
+    {
+      "keywords": "forklift",
+      "category": "Material Handling & Storage",
+      "state": "TX",
+      "min_bid": 0,
+      "max_bid": 5000
+    },
+    {
+      "keywords": "laptop",
+      "category": "Computers & Electronics",
+      "state": "",
+      "min_bid": 0,
+      "max_bid": 300
+    },
+    {
+      "keywords": "generator",
+      "category": "Power Generation",
+      "state": "TX",
+      "min_bid": 0,
+      "max_bid": 2000
+    }
+  ]
+}

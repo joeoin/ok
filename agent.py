@@ -1,78 +1,180 @@
 """
-Deal Scraper + Facebook Marketplace Poster Agent
+GovDeals Arbitrage Agent
 
-This agent:
-1. Scrapes a website for deals/discounts
-2. Formats them as Facebook Marketplace listings
-3. Uses Playwright browser automation to post them on Facebook Marketplace
+Finds government surplus auction items on GovDeals.com and lists them
+on Facebook Marketplace at 80% markup to test demand before bidding.
+
+Workflow:
+    1. Searches GovDeals.com based on criteria in config.json
+    2. For each item: Facebook price = current_bid x 1.80
+    3. Prints formatted listings (and optionally posts to Facebook Marketplace)
+    4. If people message you on Facebook -> go bid on GovDeals yourself
 
 Requirements:
-- pip install claude-agent-sdk anyio
-- npx @playwright/mcp@latest  (for browser automation)
-- You must be logged into Facebook in the Playwright browser session
+    pip install claude-agent-sdk anyio
+    npx @playwright/mcp@latest   (only needed with --post)
+
+Setup:
+    1. Edit config.json with your search criteria and location
+    2. If using --post, make sure you are logged into Facebook in the browser
 
 Usage:
-    python agent.py <website_url> [--post]
-
-    --post   Actually open Facebook Marketplace and post the listings
-             (omit to just print formatted listings without posting)
+    python agent.py                          # Scan GovDeals, print listings
+    python agent.py --post                   # Scan + post to Facebook Marketplace
+    python agent.py --config my_config.json  # Use a different config file
 """
 
 import anyio
+import json
+import os
 import sys
+
 from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
 
 
-def build_prompt(url: str, should_post: bool) -> str:
+DEFAULT_CONFIG = {
+    "markup_percent": 80,
+    "max_listings_per_search": 5,
+    "your_city_state": "Your City, ST",
+    "searches": [
+        {
+            "keywords": "",
+            "category": "Electronics",
+            "state": "",
+            "min_bid": 0,
+            "max_bid": 500
+        }
+    ]
+}
+
+
+def load_config(config_path: str) -> dict:
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            return json.load(f)
+    return DEFAULT_CONFIG
+
+
+def build_prompt(config: dict, should_post: bool) -> str:
+    markup = config.get("markup_percent", 80)
+    multiplier = 1 + markup / 100
+    max_listings = config.get("max_listings_per_search", 5)
+    your_location = config.get("your_city_state", "your city")
+    searches = config.get("searches", [])
+
+    search_instructions = ""
+    for i, s in enumerate(searches, 1):
+        parts = []
+        if s.get("keywords"):
+            parts.append(f'keywords="{s["keywords"]}"')
+        if s.get("category"):
+            parts.append(f'category={s["category"]}')
+        if s.get("state"):
+            parts.append(f'state={s["state"]}')
+        min_bid = s.get("min_bid", 0)
+        max_bid = s.get("max_bid")
+        if max_bid:
+            parts.append(f'bid range=${min_bid}–${max_bid}')
+        search_instructions += f"  Search {i}: {', '.join(parts)}\n"
+
     post_instructions = ""
     if should_post:
         post_instructions = """
-After collecting all deals, post each one to Facebook Marketplace:
-1. Navigate to https://www.facebook.com/marketplace/create/item
-2. Fill in the Title field with the listing title
-3. Fill in the Price field with the price (numbers only)
-4. Select the appropriate Category
-5. Fill in the Description with the full listing description
-6. Click "Next" and then "Publish"
-7. Wait for confirmation before moving to the next listing
+## STEP 2: Post Each Item to Facebook Marketplace
 
-Important: If you are not logged into Facebook, stop and tell the user to log in first.
+For each item, navigate to https://www.facebook.com/marketplace/create/item and:
+
+1. Title        -> paste the FB Marketplace title you prepared
+2. Price        -> enter the FB price (numbers only, no $ sign)
+3. Category     -> pick the closest Facebook Marketplace category
+4. Condition    -> "Used - Good" unless item description says otherwise
+5. Description  -> paste the FB description you prepared
+6. Photos       -> download the first GovDeals photo and upload it
+7. Click "Next" then "Publish"
+8. Wait for the confirmation screen before moving to the next listing
+
+STOP and notify the user if you are not logged into Facebook.
 """
 
-    return f"""You are a deal-finding and listing agent. Your job is to:
+    return f"""You are a government surplus arbitrage agent. Your goal is to find
+auction items on GovDeals.com and prepare Facebook Marketplace listings so the
+user can gauge demand before deciding whether to bid.
 
-1. Visit {url} and find all current deals, discounts, sales, or special offers.
+────────────────────────────────────────
+PRICING RULE
+  Facebook price = current_bid × {multiplier:.2f}   ({markup}% markup)
+  Round to the nearest $5 for clean pricing.
+  If there are zero bids, use the starting bid as the base.
+────────────────────────────────────────
 
-2. For each deal found, extract:
-   - Product name / title
-   - Original price (if shown)
-   - Sale price / deal price
-   - Discount percentage (if shown)
-   - Short description of the item
-   - Product URL or link
+## STEP 1: Scrape GovDeals.com
 
-3. Format each deal as a Facebook Marketplace listing with:
-   - Title: Short, catchy (max 100 chars) — include brand, item, and condition
-   - Price: The sale/deal price as a number
-   - Description: 2-3 sentences covering what it is, why it's a deal, and key features
-   - Category suggestion (Electronics, Home & Garden, Clothing, etc.)
+Visit https://www.govdeals.com/en and run each of these searches:
 
-4. Print a summary of all deals found before posting.
+{search_instructions}
+For each search collect up to {max_listings} items. For every item extract:
+
+  • Title           - full item name
+  • Lot number      - GovDeals lot / item ID
+  • Current bid     - highest bid so far (or starting bid if no bids yet)
+  • Auction end     - date and time the auction closes
+  • Pickup location - city and state where the item must be collected
+  • Condition notes - any damage, mileage, hours, or condition info in the listing
+  • Photo URL       - URL of the first/main photo
+  • GovDeals URL    - direct link to the listing
+
+Then calculate the Facebook price and format each item like this:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ITEM            : [full title]
+LOT #           : [lot number]
+GOVDEALS LINK   : [URL]
+CURRENT BID     : $[amount]
+FB PRICE        : $[calculated price]
+AUCTION ENDS    : [date/time]
+PICKUP LOCATION : [city, state]
+
+FB MARKETPLACE LISTING
+  Title       : [catchy title, max 100 characters]
+  Price       : $[FB price]
+  Category    : [Facebook Marketplace category]
+  Description :
+    [2-3 sentences: what it is, key specs/condition, why it is a good deal.
+     End with: "Local pickup — {your_location}. Message me for details."]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {post_instructions}
-Start by fetching the website and identifying all deals."""
+After all items, print a one-line summary:
+  "Found X items across Y searches. FB prices range from $A to $B."
+"""
 
 
 async def main() -> None:
     args = sys.argv[1:]
 
-    if not args or args[0] in ("-h", "--help"):
+    if "-h" in args or "--help" in args:
         print(__doc__)
         sys.exit(0)
 
-    url = args[0]
-    should_post = "--post" in args
+    config_path = "config.json"
+    if "--config" in args:
+        idx = args.index("--config")
+        if idx + 1 < len(args):
+            config_path = args[idx + 1]
 
-    # Build the MCP servers config — Playwright is only needed when posting
+    # First run: create default config and exit
+    if not os.path.exists(config_path):
+        with open(config_path, "w") as f:
+            json.dump(DEFAULT_CONFIG, f, indent=2)
+        print("Created config.json — edit it with your search criteria, then run again.")
+        print("  your_city_state  : where you are located (for FB listings)")
+        print("  searches         : list of GovDeals searches to run")
+        print("  markup_percent   : how much to mark up (default 80)")
+        print("  max_listings_per_search : max items per search (default 5)")
+        sys.exit(0)
+
+    should_post = "--post" in args
+    config = load_config(config_path)
+
     mcp_servers = {}
     if should_post:
         mcp_servers["playwright"] = {
@@ -80,20 +182,22 @@ async def main() -> None:
             "args": ["@playwright/mcp@latest"],
         }
 
-    allowed_tools = ["WebFetch", "WebSearch"]
-    if should_post:
-        # Playwright tools are exposed via MCP — no need to add them to allowed_tools
-        pass
+    markup = config.get("markup_percent", 80)
+    searches = config.get("searches", [])
 
-    print(f"Scanning {url} for deals...")
-    if should_post:
-        print("Will post listings to Facebook Marketplace (make sure you're logged in).")
-    print("-" * 60)
+    print("GovDeals Arbitrage Agent")
+    print("=" * 60)
+    print(f"Config         : {config_path}")
+    print(f"Markup         : {markup}%  (FB price = bid × {1 + markup/100:.2f})")
+    print(f"Searches       : {len(searches)}")
+    print(f"Your location  : {config.get('your_city_state', 'not set')}")
+    print(f"Mode           : {'SCAN + POST to Facebook Marketplace' if should_post else 'SCAN ONLY (add --post to post to Facebook)'}")
+    print("=" * 60)
 
     async for message in query(
-        prompt=build_prompt(url, should_post),
+        prompt=build_prompt(config, should_post),
         options=ClaudeAgentOptions(
-            allowed_tools=allowed_tools,
+            allowed_tools=["WebFetch", "WebSearch"],
             mcp_servers=mcp_servers,
         ),
     ):
