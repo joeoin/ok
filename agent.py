@@ -104,10 +104,25 @@ auction items on GovDeals.com near {your_location} and list them on Facebook
 Marketplace to test buyer demand — before the user ever spends a dollar bidding.
 
 ════════════════════════════════════════
- PRICING RULE
-   FB price = current_bid × {multiplier:.2f}   ({markup}% markup)
-   Round to the nearest $5.
-   If an item has zero bids, use the starting bid as the base.
+ PRICING RULES
+   Step 1 — Calculate the minimum floor price:
+     floor_price = current_bid × {multiplier:.2f}   (requires {markup}% profit minimum)
+     If an item has zero bids, use the starting bid.
+
+   Step 2 — Look up market / resale value for the item.
+
+   Step 3 — Decide:
+     SKIP  if market_value < floor_price  (can't clear {markup}% profit even at market rate)
+     KEEP  if market_value >= floor_price
+
+   Step 4 — Set the Facebook listing price:
+     List at 90% of market value, rounded to nearest $5.
+     (Slightly below market = competitive price that attracts buyers fast)
+     This is NOT the bid × markup — it is based on what the item is actually worth.
+
+   Example — John Deere Gator 4x2:
+     Current bid = $500  →  floor = $900
+     Market value ≈ $3,500  →  FB listing price = $3,150  ✅ KEEP
 
  LOCATION FILTER
    State : {state}
@@ -115,9 +130,9 @@ Marketplace to test buyer demand — before the user ever spends a dollar biddin
    Only include items the user can realistically drive to pick up.
 
  SKIP AN ITEM IF:
+   • Market value is below the floor price (less than {markup}% profit possible)
    • The auction ends in less than 24 hours (not enough time to gauge FB interest)
    • The item requires shipping only (no local pickup available)
-   • The {markup}% markup price is ABOVE typical resale value (see Step 2)
 ════════════════════════════════════════
 
 ## STEP 1: Scrape GovDeals.com
@@ -138,21 +153,26 @@ Collect up to {max_per} candidate items per category. For each item record:
   • Direct GovDeals listing URL
 
 ────────────────────────────────────────────────────────────────
-## STEP 2: Market Value Check (skip overpriced items)
+## STEP 2: Market Value Research
 
-For each candidate, do a quick WebSearch:
-  "{item name} used resale value" OR "{item name} for sale site:facebook.com"
-  OR "{item name} eBay sold listings"
+For each candidate item, run a WebSearch to find real resale prices:
+  • "{item name} for sale" Facebook Marketplace, Craigslist, eBay sold listings
+  • Use the most relevant comparable — same model, similar condition and year
 
-Estimate the typical used resale price. Then apply the rule:
+Then decide:
+  ✅ KEEP   — market value is ABOVE the floor price (bid × {multiplier:.2f})
+  ❌ SKIP   — market value is AT or BELOW floor price (not enough margin)
 
-  ✅ KEEP   — if FB price ({markup}% markup on current bid) is BELOW typical resale
-  ❌ SKIP   — if FB price is already AT or ABOVE typical resale (no room for profit)
+Calculate the Facebook listing price for kept items:
+  FB list price = market_value × 0.90, rounded to nearest $5
+  Goal: price it just under market so it looks like a deal and attracts serious buyers fast.
 
-Example: John Deere Gator 4x2 current bid $500 → FB price $900.
-  Typical resale ~$3,000–$5,000. FB price is well below market → KEEP ✅
+Example: John Deere Gator 4x2
+  Current bid $500  →  floor = $900
+  Market value ≈ $3,500  →  FB list price = $3,150  ✅ KEEP
+  Potential profit if you win at current bid: $3,150 − $500 = $2,650
 
-Only proceed to listing format for KEPT items.
+Only proceed to the listing format for KEPT items.
 ────────────────────────────────────────────────────────────────
 
 ## STEP 3: Format Each Kept Item
@@ -166,9 +186,10 @@ GOVDEALS LINK   : [URL]
 CURRENT BID     : $[amount]  ([# bids] bids)
 AUCTION ENDS    : [date/time]
 PICKUP LOCATION : [city, state]
-EST. RESALE     : $[typical market value]
-FB PRICE        : $[calculated price]  ← {markup}% markup on current bid
-VERDICT         : ✅ WORTH LISTING  (FB price is $X below market)
+EST. RESALE     : $[typical market value from your search]
+FLOOR PRICE     : $[current_bid × {multiplier:.2f}]  ← minimum to clear {markup}% profit
+FB LIST PRICE   : $[90% of market value, rounded to $5]
+VERDICT         : ✅ WORTH LISTING  (potential profit = FB price − bid = $X)
 PHOTOS          : [list all photo URLs]
 
 ── Facebook Marketplace Listing ──
@@ -186,10 +207,10 @@ Description :
 ## Final Summary
 
 Print one line per item:
-  [✅/❌] Item name | Bid: $X | FB Price: $Y | Est. Market: $Z | Ends: [date]
+  [✅/❌] Item name | Bid: $X | Market: $Z | FB List: $Y | Profit: $P | Ends: [date]
 
 Then print totals:
-  "Scanned: X items  |  Worth listing: Y  |  Skipped (overpriced): Z"
+  "Scanned: X  |  Worth listing: Y  |  Skipped (low margin): Z"
 """
 
 
