@@ -156,7 +156,7 @@ Collect up to {max_per} candidate items per category. For each item record:
 ## STEP 2: Market Value Research
 
 For each candidate item, run a WebSearch to find real resale prices:
-  • "{item name} for sale" Facebook Marketplace, Craigslist, eBay sold listings
+  • "{{item name}} for sale" Facebook Marketplace, Craigslist, eBay sold listings
   • Use the most relevant comparable — same model, similar condition and year
 
 Then decide:
