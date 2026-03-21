@@ -127,7 +127,14 @@ Marketplace listings to test buyer demand — before the user ever spends a doll
 Search for auction listings using WebSearch. Do NOT try to directly fetch auction
 site homepages — they block bots. Instead use targeted search queries.
 
-Run these searches one at a time and collect results from each:
+HARD LIMITS — you must respect these:
+  • Stop searching as soon as you have {max_per} candidate items — do not keep going
+  • If a WebFetch fails or returns no useful data, skip that URL immediately (no retries)
+  • If a search returns no auction listings, move on to the next search
+  • Do not fetch category pages or homepages — individual item pages only
+  • Complete all steps and print the final summary before you run out of turns
+
+Run these searches and collect results:
 
   1. WebSearch: "site:govdeals.com {state} tools auction pickup {your_zip}"
   2. WebSearch: "site:publicsurplus.com {state} tools electronics auction"
@@ -138,8 +145,8 @@ Run these searches one at a time and collect results from each:
   7. WebSearch: "publicsurplus.com {state} {your_zip} auction ending"
   8. WebSearch: "hibid.com {your_location} surplus tools generators electronics"
 
-For any promising result URLs found in search results, use WebFetch to get the
-listing details. Only fetch individual item pages, not category/search pages.
+Stop running searches the moment you reach {max_per} candidates — skip remaining searches.
+For any promising result URLs, use WebFetch to get listing details (one attempt only, skip if it fails).
 
 Collect up to {max_per} total candidate items across all sites. For each item record:
   • Full title
@@ -156,9 +163,10 @@ Collect up to {max_per} total candidate items across all sites. For each item re
 ────────────────────────────────────────────────────────────────
 ## STEP 2: Market Value Research
 
-For each candidate item, run a WebSearch to find real resale prices:
+For each candidate item, run ONE WebSearch to find real resale prices:
   • "[item name] for sale site:facebook.com/marketplace" OR "craigslist" OR "ebay sold"
   • Use the most relevant comparable — same model, similar condition and year
+  • One search per item only — use your best estimate if results are thin
 
 Then decide:
   KEEP  — market value is ABOVE the floor price (bid x {multiplier:.2f})
@@ -247,18 +255,23 @@ After all postings, print how many were successfully posted.
 """
 
 
-async def stream_query(prompt: str, options: ClaudeAgentOptions) -> str:
+async def stream_query(prompt: str, options: ClaudeAgentOptions, log_file=None) -> str:
     """Run a query, print output live, and return the full text."""
     full_text = []
     async for message in query(prompt=prompt, options=options):
         if isinstance(message, AssistantMessage):
             for block in message.content:
                 if hasattr(block, "text"):
-                    safe = block.text.encode("cp1252", errors="replace").decode("cp1252")
-                    print(safe, end="", flush=True)
+                    print(block.text, end="", flush=True)
+                    if log_file:
+                        log_file.write(block.text)
+                        log_file.flush()
                     full_text.append(block.text)
         elif isinstance(message, ResultMessage):
             print("\n" + message.result)
+            if log_file:
+                log_file.write("\n" + message.result + "\n")
+                log_file.flush()
             full_text.append(message.result)
         elif isinstance(message, SystemMessage) and message.subtype == "init":
             session_id = message.data.get("session_id", "")
@@ -313,11 +326,20 @@ async def main() -> None:
     print(f"Mode           : {'SCAN + CONFIRM + POST' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
     print("=" * 60)
 
+    import datetime
+    log_path = f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    print(f"Saving output to: {log_path}\n")
+
     # Phase 1: Always scan first
-    scan_results = await stream_query(
-        prompt=build_scan_prompt(config),
-        options=ClaudeAgentOptions(allowed_tools=["WebFetch", "WebSearch"]),
-    )
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        scan_results = await stream_query(
+            prompt=build_scan_prompt(config),
+            options=ClaudeAgentOptions(
+                allowed_tools=["WebFetch", "WebSearch"],
+                max_turns=40,
+            ),
+            log_file=log_file,
+        )
 
     if not should_post:
         return
@@ -346,18 +368,22 @@ async def main() -> None:
     print(f"Posting: {items_to_post}")
     print("=" * 60)
 
-    await stream_query(
-        prompt=build_post_prompt(config, scan_results, items_to_post),
-        options=ClaudeAgentOptions(
-            allowed_tools=["WebFetch", "WebSearch"],
-            mcp_servers={
-                "playwright": {
-                    "command": "npx",
-                    "args": ["@playwright/mcp@latest"],
-                }
-            },
-        ),
-    )
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write("\n\n=== POST PHASE ===\n")
+        await stream_query(
+            prompt=build_post_prompt(config, scan_results, items_to_post),
+            options=ClaudeAgentOptions(
+                allowed_tools=["WebFetch", "WebSearch"],
+                max_turns=20,
+                mcp_servers={
+                    "playwright": {
+                        "command": "npx",
+                        "args": ["@playwright/mcp@latest"],
+                    }
+                },
+            ),
+            log_file=log_file,
+        )
 
 
 if __name__ == "__main__":
