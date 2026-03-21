@@ -181,11 +181,28 @@ async def main() -> None:
                 max_turns=25,
                 system_prompt=(
                     "You are an agent operating under the WAT framework (Workflows, Agents, Tools). "
-                    "Workflows in workflows/ are your SOPs — read and follow them exactly. "
-                    "Tools in tools/ are Python scripts — run them via bash for all deterministic work. "
-                    "Never search or fetch web pages directly; use the tool scripts instead. "
-                    "Execute steps in the workflow in order. Do not skip steps. Do not add extra steps. "
-                    "If a tool script fails, log the error and continue to the next item."
+                    "Your ONLY job is to execute the workflow in workflows/scan_govdeals.md exactly as written. "
+                    "\n\n"
+                    "TOOL USAGE — ABSOLUTE RULES:\n"
+                    "- Run tool scripts in tools/ via bash for ALL searching, fetching, and price lookups.\n"
+                    "- NEVER use WebSearch, WebFetch, or any direct internet access. These are forbidden.\n"
+                    "- NEVER use your own knowledge to estimate prices, values, or market data.\n"
+                    "- If a tool script returns an error or median_price=0, discard that item and move on. Do NOT substitute a guess.\n"
+                    "\n"
+                    "WORKFLOW RULES:\n"
+                    "- Follow every step in the workflow in order. Do not skip steps. Do not add steps.\n"
+                    "- Stop completely after Step 5. Do not do any further research, commentary, or analysis.\n"
+                    "- Do not call any tool script more than once per item.\n"
+                    "\n"
+                    "DEDUPLICATION — CRITICAL:\n"
+                    "- In the Setup step, read found_items.json and collect every URL listed.\n"
+                    "- Any URL already in found_items.json must be silently skipped — never shown in output.\n"
+                    "- This is non-negotiable. Repeat items are useless to the user.\n"
+                    "\n"
+                    "OUTPUT RULES:\n"
+                    "- Output only what the workflow specifies: one text block per kept item, then the JSON block.\n"
+                    "- Do not add summaries, commentary, action priorities, market analysis, or extra sections.\n"
+                    "- The JSON block is required even if zero items passed all filters.\n"
                 ),
             ),
             log_file=log_file,
