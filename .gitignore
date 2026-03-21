@@ -1,1 +1,3 @@
 __pycache__/
+results_*.txt
+found_items.json
