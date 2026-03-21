@@ -94,66 +94,15 @@ def load_config(config_path: str) -> dict:
     return DEFAULT_CONFIG
 
 
-def build_scan_prompt(config: dict, cache: dict) -> str:
-    markup = config.get("markup_percent", 80)
-    multiplier = 1 + markup / 100
-    max_per = config.get("max_listings_per_search", 3)
-    your_location = config.get("your_city_state", "Phoenix, AZ")
-    your_zip = config.get("your_zip", "85001")
-    radius = config.get("radius_miles", 100)
-    state = config.get("state", "AZ")
-    max_bid = config.get("max_bid", 1500)
-    searches = config.get("searches", [])
-    cached_urls = [item.get("url", "") for item in cache.get("items", []) if item.get("url")]
-    skip_urls_str = "\n".join(f"  - {u}" for u in cached_urls) if cached_urls else "  (none)"
-
-    search_lines = ""
-    for i, s in enumerate(searches, 1):
-        cat = s.get("category", "All")
-        kw = f'  keywords="{s["keywords"]}"' if s.get("keywords") else ""
-        search_lines += f"  {i}. Category: {cat}{kw}\n"
-
-    return f"""You are a government surplus auction scanner. Execute these steps in exact order. Do not skip steps. Do not add extra steps.
-
-STEP 1 — WebSearch: govdeals.com {state} tools electronics generators surplus auction site:govdeals.com
-STEP 2 — WebSearch: site:publicsurplus.com {state} tools electronics generators auction
-STEP 3 — From the search results in steps 1 and 2, pick up to {max_per} item URLs that look like individual lot pages on govdeals.com or publicsurplus.com. Skip these already-found URLs:
-{skip_urls_str}
-  For each URL you picked: WebFetch it once. If the fetch fails, skip that URL entirely.
-STEP 4 — For each successfully fetched item, apply these filters (discard if ANY fail):
-  - Pickup location within {radius} miles of {your_zip}
-  - Current bid under ${max_bid}
-  - Portable item — tools, electronics, generators under 200 lbs
-  - NOT a vehicle, trailer, real estate, or heavy equipment
-  - Auction end date more than 24 hours from now
-STEP 5 — For each item that passed filters: WebSearch "[item name] used price ebay sold"
-  - market_value = median sold price from results (estimate if unclear)
-  - fb_price = round(market_value * 0.90 / 5) * 5
-  - Skip item if fb_price < bid * {multiplier:.2f}
-STEP 6 — Output results immediately. Do not do any more searches or fetches after this point.
-
-For each kept item print:
-  ITEM: [title] | LOT: [number] | SITE: [site] | URL: [url]
-  BID: $X | MARKET: $Y | FB PRICE: $Z | PROFIT: $P | ENDS: [date]
-  PICKUP: [city] | PHOTOS: [photo urls if any]
-  FB TITLE: [max 100 chars]
-  FB DESCRIPTION: [3 sentences describing the item, ending with "Local pickup only — {your_location}"]
-
-Then output this JSON block (required even if items list is empty):
-
-```json
-{{
-  "items": [
-    {{
-      "title": "item title", "lot": "lot#", "site": "site", "url": "url",
-      "bid": 0, "market_value": 0, "fb_price": 0, "pickup": "City, ST",
-      "ends": "2026-03-25", "photos": [], "fb_title": "", "fb_description": "",
-      "fb_category": "Tools & Equipment", "fb_condition": "Used - Good"
-    }}
-  ]
-}}
-```
-"""
+def build_scan_prompt() -> str:
+    return (
+        "You are operating under the WAT framework (Workflows, Agents, Tools).\n"
+        "Your task: scan government surplus auction sites for profitable resale opportunities.\n\n"
+        "Read `workflows/scan_govdeals.md` and follow it step by step.\n"
+        "All runtime parameters are in `config.json`. Already-found items are in `found_items.json`.\n\n"
+        "Use the tool scripts in `tools/` for all searching, fetching, and price lookups.\n"
+        "Do not use WebSearch or WebFetch directly — those are handled by the tool scripts.\n"
+    )
 
 
 def build_post_prompt(config: dict, scan_results: str, items_to_post: str) -> str:
@@ -272,16 +221,17 @@ async def main() -> None:
     # Phase 1: Always scan first
     with open(log_path, "w", encoding="utf-8") as log_file:
         scan_results = await stream_query(
-            prompt=build_scan_prompt(config, cache),
+            prompt=build_scan_prompt(),
             options=ClaudeAgentOptions(
-                allowed_tools=["WebFetch", "WebSearch"],
-                max_turns=15,
+                allowed_tools=["bash", "WebFetch"],
+                max_turns=25,
                 system_prompt=(
-                    "You are a government surplus auction scanner that follows instructions exactly. "
-                    "You will be given numbered steps. Execute ONLY those steps in that exact order. "
-                    "Do not add extra searches. Do not explore. Do not try to find more results. "
-                    "If a step says WebSearch once, do exactly one WebSearch and move on. "
-                    "After the last step, stop using tools and output results."
+                    "You are an agent operating under the WAT framework (Workflows, Agents, Tools). "
+                    "Workflows in workflows/ are your SOPs — read and follow them exactly. "
+                    "Tools in tools/ are Python scripts — run them via bash for all deterministic work. "
+                    "Never search or fetch web pages directly; use the tool scripts instead. "
+                    "Execute steps in the workflow in order. Do not skip steps. Do not add extra steps. "
+                    "If a tool script fails, log the error and continue to the next item."
                 ),
             ),
             log_file=log_file,
