@@ -30,7 +30,7 @@ import json
 import os
 import sys
 
-from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
+from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage, AssistantMessage
 
 
 DEFAULT_CONFIG = {
@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "radius_miles": 100,
     "state": "AZ",
     "max_bid": 1500,
+    "max_daily_posts": 5,
     "searches": [
         {"keywords": "", "category": "Vehicles"},
         {"keywords": "", "category": "Power Sports & Recreational"},
@@ -70,6 +71,7 @@ def build_prompt(config: dict, should_post: bool) -> str:
     radius = config.get("radius_miles", 100)
     state = config.get("state", "AZ")
     max_bid = config.get("max_bid", 1500)
+    max_daily_posts = config.get("max_daily_posts", 5)
     searches = config.get("searches", [])
 
     search_lines = ""
@@ -98,6 +100,7 @@ For EACH item that passed the value check, post it to Facebook Marketplace:
 10. Wait for the success confirmation before starting the next listing
 
 STOP immediately and notify the user if you are not logged into Facebook.
+Post a maximum of {max_daily_posts} items total — stop after that even if more are approved.
 After all postings, print how many were successfully posted.
 """
 
@@ -264,6 +267,7 @@ async def main() -> None:
     print(f"Location       : {config.get('your_city_state')}  (ZIP {config.get('your_zip')})  within {radius} miles")
     print(f"Markup         : {markup}%  →  FB price = bid × {1 + markup/100:.2f}")
     print(f"Max bid        : ${max_bid}  (capital limit)")
+    print(f"Max daily posts: {max_daily_posts}")
     print(f"Categories     : {len(searches)}")
     print(f"Mode           : {'SCAN + POST to Facebook Marketplace' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
     print("=" * 60)
@@ -275,8 +279,12 @@ async def main() -> None:
             mcp_servers=mcp_servers,
         ),
     ):
-        if isinstance(message, ResultMessage):
-            print(message.result)
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if hasattr(block, "text"):
+                    print(block.text, end="", flush=True)
+        elif isinstance(message, ResultMessage):
+            print("\n" + message.result)
         elif isinstance(message, SystemMessage) and message.subtype == "init":
             session_id = message.data.get("session_id", "")
             if session_id:
