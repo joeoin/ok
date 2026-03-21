@@ -223,7 +223,7 @@ async def main() -> None:
         scan_results = await stream_query(
             prompt=build_scan_prompt(),
             options=ClaudeAgentOptions(
-                allowed_tools=["bash", "WebFetch"],
+                allowed_tools=["Bash", "Read"],
                 max_turns=25,
                 system_prompt=(
                     "You are an agent operating under the WAT framework (Workflows, Agents, Tools). "
