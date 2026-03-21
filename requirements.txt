@@ -2,3 +2,4 @@ claude-agent-sdk
 anyio
 requests
 beautifulsoup4
+playwright
