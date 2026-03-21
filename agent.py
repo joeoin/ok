@@ -276,6 +276,13 @@ async def main() -> None:
             options=ClaudeAgentOptions(
                 allowed_tools=["WebFetch", "WebSearch"],
                 max_turns=15,
+                system_prompt=(
+                    "You are a government surplus auction scanner that follows instructions exactly. "
+                    "You will be given numbered steps. Execute ONLY those steps in that exact order. "
+                    "Do not add extra searches. Do not explore. Do not try to find more results. "
+                    "If a step says WebSearch once, do exactly one WebSearch and move on. "
+                    "After the last step, stop using tools and output results."
+                ),
             ),
             log_file=log_file,
         )
