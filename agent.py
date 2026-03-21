@@ -81,13 +81,13 @@ def build_scan_prompt(config: dict) -> str:
         search_lines += f"  {i}. Category: {cat}{kw}\n"
 
     return f"""You are a government surplus arbitrage agent. Your job is to find
-auction items on GovDeals.com near {your_location} and prepare Facebook
+auction items near {your_location} across multiple auction sites and prepare Facebook
 Marketplace listings to test buyer demand — before the user ever spends a dollar bidding.
 
 ════════════════════════════════════════
  PRICING RULES
    Step 1 — Calculate the minimum floor price:
-     floor_price = current_bid × {multiplier:.2f}   (requires {markup}% profit minimum)
+     floor_price = current_bid x {multiplier:.2f}   (requires {markup}% profit minimum)
      If an item has zero bids, use the starting bid.
 
    Step 2 — Look up market / resale value for the item.
@@ -98,12 +98,11 @@ Marketplace listings to test buyer demand — before the user ever spends a doll
 
    Step 4 — Set the Facebook listing price:
      List at 90% of market value, rounded to nearest $5.
-     (Slightly below market = competitive price that attracts buyers fast)
-     This is NOT the bid × markup — it is based on what the item is actually worth.
+     This is NOT the bid x markup — it is based on what the item is actually worth.
 
-   Example — John Deere Gator 4x2:
-     Current bid = $500  →  floor = $900
-     Market value ≈ $3,500  →  FB listing price = $3,150  ✅ KEEP
+   Example — Milwaukee drill set:
+     Current bid = $80  ->  floor = $144
+     Market value = $280  ->  FB listing price = $250  KEEP
 
  LOCATION FILTER
    State : {state}
@@ -120,39 +119,53 @@ Marketplace listings to test buyer demand — before the user ever spends a doll
      PREFER items that two people can load without special equipment: hand tools,
      power tools, electronics, generators (under 200 lbs), small appliances, office
      furniture, and similar man-portable or dolly-movable items.
+   • Military surplus items (weapons, body armor, military vehicles, etc.)
 ════════════════════════════════════════
 
-## STEP 1: Scrape GovDeals.com
+## STEP 1: Find Listings Using WebSearch
 
-Visit https://www.govdeals.com/en and search for items in {state} (radius {radius} miles
-from {your_zip}) across these categories:
+Search for auction listings using WebSearch. Do NOT try to directly fetch auction
+site homepages — they block bots. Instead use targeted search queries.
 
-{search_lines}
-Collect up to {max_per} candidate items per category. For each item record:
+Run these searches one at a time and collect results from each:
+
+  1. WebSearch: "site:govdeals.com {state} tools auction pickup {your_zip}"
+  2. WebSearch: "site:publicsurplus.com {state} tools electronics auction"
+  3. WebSearch: "site:hibid.com {state} surplus tools electronics auction"
+  4. WebSearch: "site:auctionzip.com {state} government surplus tools"
+  5. WebSearch: "site:bid4assets.com {state} surplus auction"
+  6. WebSearch: "{your_location} government surplus auction tools electronics 2025 2026"
+  7. WebSearch: "publicsurplus.com {state} {your_zip} auction ending"
+  8. WebSearch: "hibid.com {your_location} surplus tools generators electronics"
+
+For any promising result URLs found in search results, use WebFetch to get the
+listing details. Only fetch individual item pages, not category/search pages.
+
+Collect up to {max_per} total candidate items across all sites. For each item record:
   • Full title
-  • Lot number
+  • Lot or item number
   • Current bid (or starting bid if no bids yet)
   • Number of bids so far
   • Auction end date/time
   • Pickup city and state
-  • ALL photo URLs from the listing
-  • Item condition / notes (mileage, hours, damage, etc.)
-  • Direct GovDeals listing URL
+  • Photo URLs if available
+  • Item condition / notes
+  • Direct listing URL
+  • Which auction site it came from
 
 ────────────────────────────────────────────────────────────────
 ## STEP 2: Market Value Research
 
 For each candidate item, run a WebSearch to find real resale prices:
-  • "{{item name}} for sale" Facebook Marketplace, Craigslist, eBay sold listings
+  • "[item name] for sale site:facebook.com/marketplace" OR "craigslist" OR "ebay sold"
   • Use the most relevant comparable — same model, similar condition and year
 
 Then decide:
-  ✅ KEEP   — market value is ABOVE the floor price (bid × {multiplier:.2f})
-  ❌ SKIP   — market value is AT or BELOW floor price (not enough margin)
+  KEEP  — market value is ABOVE the floor price (bid x {multiplier:.2f})
+  SKIP  — market value is AT or BELOW floor price (not enough margin)
 
 Calculate the Facebook listing price for kept items:
-  FB list price = market_value × 0.90, rounded to nearest $5
-  Goal: price it just under market so it looks like a deal and attracts serious buyers fast.
+  FB list price = market_value x 0.90, rounded to nearest $5
 
 Only proceed to the listing format for KEPT items.
 ────────────────────────────────────────────────────────────────
@@ -161,21 +174,22 @@ Only proceed to the listing format for KEPT items.
 
 Number each item starting from 1. Print each item in this format:
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+================================================
 ITEM #          : [number]
 ITEM            : [full title]
-LOT #           : [lot number]
-GOVDEALS LINK   : [URL]
+LOT #           : [lot/item number]
+AUCTION SITE    : [site name]
+LISTING LINK    : [URL]
 CURRENT BID     : $[amount]  ([# bids] bids)
 AUCTION ENDS    : [date/time]
 PICKUP LOCATION : [city, state]
 EST. RESALE     : $[typical market value from your search]
-FLOOR PRICE     : $[current_bid × {multiplier:.2f}]  ← minimum to clear {markup}% profit
+FLOOR PRICE     : $[current_bid x {multiplier:.2f}]  <- minimum to clear {markup}% profit
 FB LIST PRICE   : $[90% of market value, rounded to $5]
-VERDICT         : ✅ WORTH LISTING  (potential profit = FB price − bid = $X)
-PHOTOS          : [list all photo URLs]
+VERDICT         : WORTH LISTING  (potential profit = FB price - bid = $X)
+PHOTOS          : [list all photo URLs if found]
 
-── Facebook Marketplace Listing ──
+-- Facebook Marketplace Listing --
 Title       : [brand + item + key spec, max 100 chars]
 Price       : $[FB price]
 Category    : [FB Marketplace category]
@@ -183,14 +197,14 @@ Condition   : [Used - Good / Used - Fair / etc.]
 Description :
   [Sentence 1: what it is and key specs (year, model, hours/miles if known).]
   [Sentence 2: condition summary from the listing.]
-  [Sentence 3: why this is a deal — mention government surplus if relevant.]
-  Local pickup only — {your_location}. Message me for more details and photos.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  [Sentence 3: why this is a deal -- mention government surplus if relevant.]
+  Local pickup only -- {your_location}. Message me for more details and photos.
+================================================
 
 ## Final Summary
 
 Print one line per item:
-  [✅/❌] #[n] Item name | Bid: $X | Market: $Z | FB List: $Y | Profit: $P | Ends: [date]
+  [KEEP/SKIP] #[n] Item name | Site: [auction site] | Bid: $X | Market: $Z | FB List: $Y | Profit: $P | Ends: [date]
 
 Then print totals:
   "Scanned: X  |  Worth listing: Y  |  Skipped (low margin): Z"
