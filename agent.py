@@ -113,37 +113,33 @@ def build_scan_prompt(config: dict, cache: dict) -> str:
         kw = f'  keywords="{s["keywords"]}"' if s.get("keywords") else ""
         search_lines += f"  {i}. Category: {cat}{kw}\n"
 
-    return f"""Find {max_per} government surplus auction items near {your_location} and format them as Facebook Marketplace listings.
+    return f"""You are a government surplus auction scanner. Execute these steps in exact order. Do not skip steps. Do not add extra steps.
 
-YOU MUST ONLY DO 3 WEBSEARCHES TOTAL. Do NOT do more. Do NOT search 8 sites. ONLY 3 searches.
+STEP 1 — WebSearch: govdeals.com {state} tools electronics generators surplus auction site:govdeals.com
+STEP 2 — WebSearch: site:publicsurplus.com {state} tools electronics generators auction
+STEP 3 — From the search results in steps 1 and 2, pick up to {max_per} item URLs that look like individual lot pages on govdeals.com or publicsurplus.com. Skip these already-found URLs:
+{skip_urls_str}
+  For each URL you picked: WebFetch it once. If the fetch fails, skip that URL entirely.
+STEP 4 — For each successfully fetched item, apply these filters (discard if ANY fail):
+  - Pickup location within {radius} miles of {your_zip}
+  - Current bid under ${max_bid}
+  - Portable item — tools, electronics, generators under 200 lbs
+  - NOT a vehicle, trailer, real estate, or heavy equipment
+  - Auction end date more than 24 hours from now
+STEP 5 — For each item that passed filters: WebSearch "[item name] used price ebay sold"
+  - market_value = median sold price from results (estimate if unclear)
+  - fb_price = round(market_value * 0.90 / 5) * 5
+  - Skip item if fb_price < bid * {multiplier:.2f}
+STEP 6 — Output results immediately. Do not do any more searches or fetches after this point.
 
-SEARCH 1: "{your_location} govdeals tools electronics generators auction"
-SEARCH 2: "publicsurplus.com {state} tools electronics auction"
-SEARCH 3: "{your_location} government surplus auction 2026"
-
-After those 3 searches, STOP SEARCHING. Pick the {max_per} best item URLs from results and WebFetch each one (once only, skip if it fails).
-
-SKIP URLs already found: {skip_urls_str}
-
-RULES:
-- Only items within {radius} miles of {your_zip}
-- Current bid must be under ${max_bid}
-- Only portable items (tools, electronics, generators under 200 lbs)
-- Skip vehicles, trailers, heavy equipment, military surplus
-- Skip auctions ending within 24 hours
-- floor_price = bid x {multiplier:.2f} — skip if market value is below this
-
-For each kept item, do ONE WebSearch for market value ("[item name] sold price ebay"), then:
-- FB price = market_value x 0.90, rounded to $5
-
-Print each kept item:
-  ITEM: [title] | LOT: [number] | SITE: [site] | URL: [link]
+For each kept item print:
+  ITEM: [title] | LOT: [number] | SITE: [site] | URL: [url]
   BID: $X | MARKET: $Y | FB PRICE: $Z | PROFIT: $P | ENDS: [date]
-  PICKUP: [city] | PHOTOS: [urls]
-  FB TITLE: [max 100 chars] | FB CATEGORY: [category] | CONDITION: [condition]
-  FB DESCRIPTION: [3 sentences + "Local pickup only -- {your_location}"]
+  PICKUP: [city] | PHOTOS: [photo urls if any]
+  FB TITLE: [max 100 chars]
+  FB DESCRIPTION: [3 sentences describing the item, ending with "Local pickup only — {your_location}"]
 
-Then print a summary line and this JSON block:
+Then output this JSON block (required even if items list is empty):
 
 ```json
 {{
@@ -152,13 +148,11 @@ Then print a summary line and this JSON block:
       "title": "item title", "lot": "lot#", "site": "site", "url": "url",
       "bid": 0, "market_value": 0, "fb_price": 0, "pickup": "City, ST",
       "ends": "2026-03-25", "photos": [], "fb_title": "", "fb_description": "",
-      "fb_category": "", "fb_condition": "Used - Good"
+      "fb_category": "Tools & Equipment", "fb_condition": "Used - Good"
     }}
   ]
 }}
 ```
-
-If zero items kept, output ```json {{"items": []}} ```
 """
 
 
