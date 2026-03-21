@@ -73,7 +73,7 @@ def search_govdeals(state: str, keywords: str, max_results: int) -> list[dict]:
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             page.goto(search_url, timeout=30000, wait_until="domcontentloaded")
-            time.sleep(3)  # Let Akamai JS challenge resolve
+            time.sleep(15)  # Wait for Angular SPA to render search results
 
             # Check if we got blocked
             if "Access Denied" in (page.title() or ""):
@@ -81,20 +81,16 @@ def search_govdeals(state: str, keywords: str, max_results: int) -> list[dict]:
                 browser.close()
                 return results
 
-            # Wait for auction item links to appear
+            # Wait for asset links to appear (GovDeals uses /en/asset/ not /en/auction/)
             try:
-                page.wait_for_selector("a[href*='/en/auction/']", timeout=15000)
+                page.wait_for_selector("a[href*='/en/asset/']", timeout=15000)
             except PlaywrightTimeout:
-                # Try alternate selector in case page structure changed
-                try:
-                    page.wait_for_selector("a[href*='govdeals.com']", timeout=5000)
-                except PlaywrightTimeout:
-                    print("GovDeals: timed out waiting for results", file=sys.stderr)
-                    browser.close()
-                    return results
+                print("GovDeals: timed out waiting for results", file=sys.stderr)
+                browser.close()
+                return results
 
             seen = set()
-            for a in page.query_selector_all("a[href*='/en/auction/']"):
+            for a in page.query_selector_all("a[href*='/en/asset/']"):
                 href = a.get_attribute("href") or ""
                 if not href.startswith("http"):
                     href = "https://www.govdeals.com" + href

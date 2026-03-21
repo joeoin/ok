@@ -44,8 +44,8 @@ def parse_govdeals(soup: BeautifulSoup, url: str) -> dict:
     h1 = soup.find("h1") or soup.find("h2")
     result["title"] = h1.get_text(strip=True) if h1 else ""
 
-    # Lot number from URL query param invId
-    lot_m = re.search(r"[?&]invId=(\w+)", url)
+    # Lot number from URL: /en/asset/{assetId}/{sellerId} or legacy ?invId=X
+    lot_m = re.search(r"/en/asset/(\d+/\d+)", url) or re.search(r"[?&]invId=(\w+)", url)
     result["lot"] = lot_m.group(1) if lot_m else ""
 
     # Current bid — scan labels for "Current Bid" / "High Bid"
@@ -143,7 +143,31 @@ def parse_publicsurplus(soup: BeautifulSoup, url: str) -> dict:
     return result
 
 
+def fetch_with_playwright(url: str) -> str:
+    """Fetch a JS-rendered page using Playwright and return the HTML."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = browser.new_page()
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        time.sleep(10)
+        html = page.content()
+        browser.close()
+    return html
+
+
 def fetch(url: str) -> dict:
+    if "govdeals.com" in url:
+        # GovDeals is a JS-rendered Angular app — needs Playwright
+        html = fetch_with_playwright(url)
+        soup = BeautifulSoup(html, "html.parser")
+        return parse_govdeals(soup, url)
+
     r = requests.get(url, headers=HEADERS, timeout=20)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
