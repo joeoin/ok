@@ -240,7 +240,8 @@ async def stream_query(prompt: str, options: ClaudeAgentOptions) -> str:
         if isinstance(message, AssistantMessage):
             for block in message.content:
                 if hasattr(block, "text"):
-                    print(block.text, end="", flush=True)
+                    safe = block.text.encode("cp1252", errors="replace").decode("cp1252")
+                    print(safe, end="", flush=True)
                     full_text.append(block.text)
         elif isinstance(message, ResultMessage):
             print("\n" + message.result)
