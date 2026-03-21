@@ -10,6 +10,13 @@
   "searches": [
     {"keywords": "", "category": "Tools & Equipment"},
     {"keywords": "", "category": "Electronics & Computers"},
-    {"keywords": "", "category": "Generators & Power Equipment"}
+    {"keywords": "", "category": "Generators & Power Equipment"},
+    {"keywords": "", "category": "Furniture & Office Equipment"},
+    {"keywords": "", "category": "Medical & Lab Equipment"},
+    {"keywords": "", "category": "HVAC & Appliances"},
+    {"keywords": "", "category": "Sporting Goods & Recreation"},
+    {"keywords": "", "category": "Musical Instruments"},
+    {"keywords": "", "category": "Lawn & Garden Equipment"},
+    {"keywords": "", "category": "Janitorial & Cleaning Equipment"}
   ]
 }
