@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
     "your_zip": "85001",
     "radius_miles": 100,
     "state": "AZ",
+    "max_bid": 1500,
     "searches": [
         {"keywords": "", "category": "Vehicles"},
         {"keywords": "", "category": "Power Sports & Recreational"},
@@ -68,6 +69,7 @@ def build_prompt(config: dict, should_post: bool) -> str:
     your_zip = config.get("your_zip", "85001")
     radius = config.get("radius_miles", 100)
     state = config.get("state", "AZ")
+    max_bid = config.get("max_bid", 1500)
     searches = config.get("searches", [])
 
     search_lines = ""
@@ -130,6 +132,7 @@ Marketplace to test buyer demand — before the user ever spends a dollar biddin
    Only include items the user can realistically drive to pick up.
 
  SKIP AN ITEM IF:
+   • Current bid (or starting bid) exceeds ${max_bid} — capital limit
    • Market value is below the floor price (less than {markup}% profit possible)
    • The auction ends in less than 24 hours (not enough time to gauge FB interest)
    • The item requires shipping only (no local pickup available)
@@ -254,11 +257,13 @@ async def main() -> None:
     markup = config.get("markup_percent", 80)
     searches = config.get("searches", [])
     radius = config.get("radius_miles", 100)
+    max_bid = config.get("max_bid", 1500)
 
     print("GovDeals Arbitrage Agent")
     print("=" * 60)
     print(f"Location       : {config.get('your_city_state')}  (ZIP {config.get('your_zip')})  within {radius} miles")
     print(f"Markup         : {markup}%  →  FB price = bid × {1 + markup/100:.2f}")
+    print(f"Max bid        : ${max_bid}  (capital limit)")
     print(f"Categories     : {len(searches)}")
     print(f"Mode           : {'SCAN + POST to Facebook Marketplace' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
     print("=" * 60)
