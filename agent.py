@@ -34,9 +34,11 @@ import sys
 from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage, AssistantMessage
 
 
+CACHE_PATH = "found_items.json"
+
 DEFAULT_CONFIG = {
     "markup_percent": 80,
-    "max_listings_per_search": 5,
+    "max_listings_per_search": 3,
     "your_city_state": "Phoenix, AZ",
     "your_zip": "85001",
     "radius_miles": 100,
@@ -44,16 +46,45 @@ DEFAULT_CONFIG = {
     "max_bid": 1500,
     "max_daily_posts": 5,
     "searches": [
-        {"keywords": "", "category": "Vehicles"},
-        {"keywords": "", "category": "Power Sports & Recreational"},
-        {"keywords": "", "category": "Trailers"},
-        {"keywords": "", "category": "Construction & Farm Equipment"},
         {"keywords": "", "category": "Tools & Equipment"},
         {"keywords": "", "category": "Electronics & Computers"},
-        {"keywords": "", "category": "Lawn & Garden"},
         {"keywords": "", "category": "Generators & Power Equipment"}
     ]
 }
+
+
+def load_cache() -> dict:
+    if os.path.exists(CACHE_PATH):
+        with open(CACHE_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    return {"items": []}
+
+
+def save_to_cache(scan_text: str, cache: dict) -> dict:
+    """Parse the agent's JSON block from scan output and merge into cache."""
+    import re
+    match = re.search(r"```json\s*(\{.*?\})\s*```", scan_text, re.DOTALL)
+    if not match:
+        match = re.search(r"```json\s*(\[.*?\])\s*```", scan_text, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(1))
+            new_items = data if isinstance(data, list) else data.get("items", [])
+            existing_urls = {item.get("url", "") for item in cache["items"]}
+            added = 0
+            for item in new_items:
+                if item.get("url") and item["url"] not in existing_urls:
+                    cache["items"].append(item)
+                    existing_urls.add(item["url"])
+                    added += 1
+            with open(CACHE_PATH, "w", encoding="utf-8") as f:
+                json.dump(cache, f, indent=2)
+            print(f"\nCache: added {added} new items, {len(cache['items'])} total in {CACHE_PATH}")
+        except json.JSONDecodeError as e:
+            print(f"\nWarning: could not parse JSON from agent output: {e}")
+    else:
+        print("\nWarning: no JSON block found in agent output — nothing cached")
+    return cache
 
 
 def load_config(config_path: str) -> dict:
@@ -63,16 +94,18 @@ def load_config(config_path: str) -> dict:
     return DEFAULT_CONFIG
 
 
-def build_scan_prompt(config: dict) -> str:
+def build_scan_prompt(config: dict, cache: dict) -> str:
     markup = config.get("markup_percent", 80)
     multiplier = 1 + markup / 100
-    max_per = config.get("max_listings_per_search", 5)
+    max_per = config.get("max_listings_per_search", 3)
     your_location = config.get("your_city_state", "Phoenix, AZ")
     your_zip = config.get("your_zip", "85001")
     radius = config.get("radius_miles", 100)
     state = config.get("state", "AZ")
     max_bid = config.get("max_bid", 1500)
     searches = config.get("searches", [])
+    cached_urls = [item.get("url", "") for item in cache.get("items", []) if item.get("url")]
+    skip_urls_str = "\n".join(f"  - {u}" for u in cached_urls) if cached_urls else "  (none)"
 
     search_lines = ""
     for i, s in enumerate(searches, 1):
@@ -127,26 +160,32 @@ Marketplace listings to test buyer demand — before the user ever spends a doll
 Search for auction listings using WebSearch. Do NOT try to directly fetch auction
 site homepages — they block bots. Instead use targeted search queries.
 
+TURN BUDGET: You have ~35 turns total. Budget them like this:
+  • Searches: 3 searches = 3 turns
+  • WebFetch for details: up to 5 fetches = 5 turns
+  • Market value lookups: up to 3 searches = 3 turns
+  • Formatting + JSON output: 1 turn
+  That leaves ~23 spare turns for retries. Do NOT use more than this budget.
+
 HARD LIMITS — you must respect these:
   • Stop searching as soon as you have {max_per} candidate items — do not keep going
-  • If a WebFetch fails or returns no useful data, skip that URL immediately (no retries)
+  • If a WebFetch fails or returns no useful data, skip that URL immediately (NO retries)
   • If a search returns no auction listings, move on to the next search
   • Do not fetch category pages or homepages — individual item pages only
-  • Complete all steps and print the final summary before you run out of turns
+  • Complete ALL steps including the JSON block before you run out of turns
+  • NEVER revisit a URL you already fetched — one attempt per URL
 
-Run these searches and collect results:
+SKIP these URLs (already found in previous runs):
+{skip_urls_str}
 
-  1. WebSearch: "site:govdeals.com {state} tools auction pickup {your_zip}"
+Run exactly these 3 searches:
+
+  1. WebSearch: "site:govdeals.com {state} tools electronics generators {your_zip}"
   2. WebSearch: "site:publicsurplus.com {state} tools electronics auction"
-  3. WebSearch: "site:hibid.com {state} surplus tools electronics auction"
-  4. WebSearch: "site:auctionzip.com {state} government surplus tools"
-  5. WebSearch: "site:bid4assets.com {state} surplus auction"
-  6. WebSearch: "{your_location} government surplus auction tools electronics 2025 2026"
-  7. WebSearch: "publicsurplus.com {state} {your_zip} auction ending"
-  8. WebSearch: "hibid.com {your_location} surplus tools generators electronics"
+  3. WebSearch: "{your_location} government surplus auction tools electronics generators 2026"
 
-Stop running searches the moment you reach {max_per} candidates — skip remaining searches.
-For any promising result URLs, use WebFetch to get listing details (one attempt only, skip if it fails).
+Stop the moment you reach {max_per} candidates — skip remaining searches.
+For promising result URLs (not in the skip list), use WebFetch once to get details.
 
 Collect up to {max_per} total candidate items across all sites. For each item record:
   • Full title
@@ -216,6 +255,37 @@ Print one line per item:
 
 Then print totals:
   "Scanned: X  |  Worth listing: Y  |  Skipped (low margin): Z"
+
+## STEP 4: Output JSON for caching
+
+IMPORTANT: After the summary, output a JSON block with ALL kept items so they can
+be cached. Use this exact format:
+
+```json
+{{
+  "items": [
+    {{
+      "title": "item title",
+      "lot": "lot number",
+      "site": "auction site name",
+      "url": "direct listing URL",
+      "bid": 123,
+      "market_value": 456,
+      "fb_price": 410,
+      "pickup": "City, ST",
+      "ends": "2026-03-25",
+      "photos": ["url1", "url2"],
+      "fb_title": "FB listing title",
+      "fb_description": "FB listing description",
+      "fb_category": "FB category",
+      "fb_condition": "Used - Good"
+    }}
+  ]
+}}
+```
+
+This JSON block is REQUIRED — do not skip it even if zero items were kept.
+If zero items, output: ```json {{"items": []}} ```
 """
 
 
@@ -309,6 +379,7 @@ async def main() -> None:
 
     should_post = "--post" in args
     config = load_config(config_path)
+    cache = load_cache()
 
     markup = config.get("markup_percent", 80)
     searches = config.get("searches", [])
@@ -319,10 +390,11 @@ async def main() -> None:
     print("GovDeals Arbitrage Agent")
     print("=" * 60)
     print(f"Location       : {config.get('your_city_state')}  (ZIP {config.get('your_zip')})  within {radius} miles")
-    print(f"Markup         : {markup}%  →  FB price = bid × {1 + markup/100:.2f}")
+    print(f"Markup         : {markup}%  →  FB price = bid x {1 + markup/100:.2f}")
     print(f"Max bid        : ${max_bid}  (capital limit)")
     print(f"Max daily posts: {max_daily_posts}")
     print(f"Categories     : {len(searches)}")
+    print(f"Cached items   : {len(cache.get('items', []))}")
     print(f"Mode           : {'SCAN + CONFIRM + POST' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
     print("=" * 60)
 
@@ -333,13 +405,16 @@ async def main() -> None:
     # Phase 1: Always scan first
     with open(log_path, "w", encoding="utf-8") as log_file:
         scan_results = await stream_query(
-            prompt=build_scan_prompt(config),
+            prompt=build_scan_prompt(config, cache),
             options=ClaudeAgentOptions(
                 allowed_tools=["WebFetch", "WebSearch"],
-                max_turns=40,
+                max_turns=35,
             ),
             log_file=log_file,
         )
+
+    # Save found items to cache
+    cache = save_to_cache(scan_results, cache)
 
     if not should_post:
         return

@@ -1,16 +1,15 @@
 {
   "markup_percent": 80,
-  "max_listings_per_search": 5,
+  "max_listings_per_search": 3,
   "your_city_state": "Phoenix, AZ",
   "your_zip": "85001",
   "radius_miles": 100,
   "state": "AZ",
+  "max_bid": 1500,
+  "max_daily_posts": 5,
   "searches": [
     {"keywords": "", "category": "Tools & Equipment"},
     {"keywords": "", "category": "Electronics & Computers"},
-    {"keywords": "", "category": "Generators & Power Equipment"},
-    {"keywords": "", "category": "Lawn & Garden"},
-    {"keywords": "", "category": "Medical Equipment"},
-    {"keywords": "", "category": "Office Equipment & Furniture"}
+    {"keywords": "", "category": "Generators & Power Equipment"}
   ]
 }
