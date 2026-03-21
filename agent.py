@@ -115,6 +115,11 @@ Marketplace listings to test buyer demand — before the user ever spends a doll
    • Market value is below the floor price (less than {markup}% profit possible)
    • The auction ends in less than 24 hours (not enough time to gauge FB interest)
    • The item requires shipping only (no local pickup available)
+   • The item is too large to fit in a standard cargo van / U-Haul truck (e.g. full
+     vehicles, heavy construction equipment, large trailers, riding mowers, boats).
+     PREFER items that two people can load without special equipment: hand tools,
+     power tools, electronics, generators (under 200 lbs), small appliances, office
+     furniture, and similar man-portable or dolly-movable items.
 ════════════════════════════════════════
 
 ## STEP 1: Scrape GovDeals.com
