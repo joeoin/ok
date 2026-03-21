@@ -89,18 +89,19 @@ def search_govdeals(state: str, keywords: str, max_results: int) -> list[dict]:
                 browser.close()
                 return results
 
-            seen = set()
+            # Each listing has 3 <a> tags with same href: empty, "ONLINE AUCTION", real title
+            # Use a dict to collect the first real title per href
+            best = {}
             for a in page.query_selector_all("a[href*='/en/asset/']"):
                 href = a.get_attribute("href") or ""
                 if not href.startswith("http"):
                     href = "https://www.govdeals.com" + href
-                if href not in seen:
-                    seen.add(href)
-                    title = (a.inner_text() or "").strip()
-                    if len(title) > 5:
-                        results.append({"url": href, "title": title, "site": "govdeals"})
-                        if len(results) >= max_results:
-                            break
+                title = (a.inner_text() or "").strip()
+                if len(title) > 5 and title != "ONLINE AUCTION" and href not in best:
+                    best[href] = title
+
+            for href, title in list(best.items())[:max_results]:
+                results.append({"url": href, "title": title, "site": "govdeals"})
 
             browser.close()
     except Exception as e:
