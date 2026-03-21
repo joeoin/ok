@@ -113,179 +113,52 @@ def build_scan_prompt(config: dict, cache: dict) -> str:
         kw = f'  keywords="{s["keywords"]}"' if s.get("keywords") else ""
         search_lines += f"  {i}. Category: {cat}{kw}\n"
 
-    return f"""You are a government surplus arbitrage agent. Your job is to find
-auction items near {your_location} across multiple auction sites and prepare Facebook
-Marketplace listings to test buyer demand — before the user ever spends a dollar bidding.
+    return f"""Find {max_per} government surplus auction items near {your_location} and format them as Facebook Marketplace listings.
 
-════════════════════════════════════════
- PRICING RULES
-   Step 1 — Calculate the minimum floor price:
-     floor_price = current_bid x {multiplier:.2f}   (requires {markup}% profit minimum)
-     If an item has zero bids, use the starting bid.
+YOU MUST ONLY DO 3 WEBSEARCHES TOTAL. Do NOT do more. Do NOT search 8 sites. ONLY 3 searches.
 
-   Step 2 — Look up market / resale value for the item.
+SEARCH 1: "{your_location} govdeals tools electronics generators auction"
+SEARCH 2: "publicsurplus.com {state} tools electronics auction"
+SEARCH 3: "{your_location} government surplus auction 2026"
 
-   Step 3 — Decide:
-     SKIP  if market_value < floor_price  (can't clear {markup}% profit even at market rate)
-     KEEP  if market_value >= floor_price
+After those 3 searches, STOP SEARCHING. Pick the {max_per} best item URLs from results and WebFetch each one (once only, skip if it fails).
 
-   Step 4 — Set the Facebook listing price:
-     List at 90% of market value, rounded to nearest $5.
-     This is NOT the bid x markup — it is based on what the item is actually worth.
+SKIP URLs already found: {skip_urls_str}
 
-   Example — Milwaukee drill set:
-     Current bid = $80  ->  floor = $144
-     Market value = $280  ->  FB listing price = $250  KEEP
+RULES:
+- Only items within {radius} miles of {your_zip}
+- Current bid must be under ${max_bid}
+- Only portable items (tools, electronics, generators under 200 lbs)
+- Skip vehicles, trailers, heavy equipment, military surplus
+- Skip auctions ending within 24 hours
+- floor_price = bid x {multiplier:.2f} — skip if market value is below this
 
- LOCATION FILTER
-   State : {state}
-   Radius: within {radius} miles of zip code {your_zip} ({your_location})
-   Only include items the user can realistically drive to pick up.
+For each kept item, do ONE WebSearch for market value ("[item name] sold price ebay"), then:
+- FB price = market_value x 0.90, rounded to $5
 
- SKIP AN ITEM IF:
-   • Current bid (or starting bid) exceeds ${max_bid} — capital limit
-   • Market value is below the floor price (less than {markup}% profit possible)
-   • The auction ends in less than 24 hours (not enough time to gauge FB interest)
-   • The item requires shipping only (no local pickup available)
-   • The item is too large to fit in a standard cargo van / U-Haul truck (e.g. full
-     vehicles, heavy construction equipment, large trailers, riding mowers, boats).
-     PREFER items that two people can load without special equipment: hand tools,
-     power tools, electronics, generators (under 200 lbs), small appliances, office
-     furniture, and similar man-portable or dolly-movable items.
-   • Military surplus items (weapons, body armor, military vehicles, etc.)
-════════════════════════════════════════
+Print each kept item:
+  ITEM: [title] | LOT: [number] | SITE: [site] | URL: [link]
+  BID: $X | MARKET: $Y | FB PRICE: $Z | PROFIT: $P | ENDS: [date]
+  PICKUP: [city] | PHOTOS: [urls]
+  FB TITLE: [max 100 chars] | FB CATEGORY: [category] | CONDITION: [condition]
+  FB DESCRIPTION: [3 sentences + "Local pickup only -- {your_location}"]
 
-## STEP 1: Find Listings Using WebSearch
-
-Search for auction listings using WebSearch. Do NOT try to directly fetch auction
-site homepages — they block bots. Instead use targeted search queries.
-
-TURN BUDGET: You have ~35 turns total. Budget them like this:
-  • Searches: 3 searches = 3 turns
-  • WebFetch for details: up to 5 fetches = 5 turns
-  • Market value lookups: up to 3 searches = 3 turns
-  • Formatting + JSON output: 1 turn
-  That leaves ~23 spare turns for retries. Do NOT use more than this budget.
-
-HARD LIMITS — you must respect these:
-  • Stop searching as soon as you have {max_per} candidate items — do not keep going
-  • If a WebFetch fails or returns no useful data, skip that URL immediately (NO retries)
-  • If a search returns no auction listings, move on to the next search
-  • Do not fetch category pages or homepages — individual item pages only
-  • Complete ALL steps including the JSON block before you run out of turns
-  • NEVER revisit a URL you already fetched — one attempt per URL
-
-SKIP these URLs (already found in previous runs):
-{skip_urls_str}
-
-Run exactly these 3 searches:
-
-  1. WebSearch: "site:govdeals.com {state} tools electronics generators {your_zip}"
-  2. WebSearch: "site:publicsurplus.com {state} tools electronics auction"
-  3. WebSearch: "{your_location} government surplus auction tools electronics generators 2026"
-
-Stop the moment you reach {max_per} candidates — skip remaining searches.
-For promising result URLs (not in the skip list), use WebFetch once to get details.
-
-Collect up to {max_per} total candidate items across all sites. For each item record:
-  • Full title
-  • Lot or item number
-  • Current bid (or starting bid if no bids yet)
-  • Number of bids so far
-  • Auction end date/time
-  • Pickup city and state
-  • Photo URLs if available
-  • Item condition / notes
-  • Direct listing URL
-  • Which auction site it came from
-
-────────────────────────────────────────────────────────────────
-## STEP 2: Market Value Research
-
-For each candidate item, run ONE WebSearch to find real resale prices:
-  • "[item name] for sale site:facebook.com/marketplace" OR "craigslist" OR "ebay sold"
-  • Use the most relevant comparable — same model, similar condition and year
-  • One search per item only — use your best estimate if results are thin
-
-Then decide:
-  KEEP  — market value is ABOVE the floor price (bid x {multiplier:.2f})
-  SKIP  — market value is AT or BELOW floor price (not enough margin)
-
-Calculate the Facebook listing price for kept items:
-  FB list price = market_value x 0.90, rounded to nearest $5
-
-Only proceed to the listing format for KEPT items.
-────────────────────────────────────────────────────────────────
-
-## STEP 3: Format Each Kept Item
-
-Number each item starting from 1. Print each item in this format:
-
-================================================
-ITEM #          : [number]
-ITEM            : [full title]
-LOT #           : [lot/item number]
-AUCTION SITE    : [site name]
-LISTING LINK    : [URL]
-CURRENT BID     : $[amount]  ([# bids] bids)
-AUCTION ENDS    : [date/time]
-PICKUP LOCATION : [city, state]
-EST. RESALE     : $[typical market value from your search]
-FLOOR PRICE     : $[current_bid x {multiplier:.2f}]  <- minimum to clear {markup}% profit
-FB LIST PRICE   : $[90% of market value, rounded to $5]
-VERDICT         : WORTH LISTING  (potential profit = FB price - bid = $X)
-PHOTOS          : [list all photo URLs if found]
-
--- Facebook Marketplace Listing --
-Title       : [brand + item + key spec, max 100 chars]
-Price       : $[FB price]
-Category    : [FB Marketplace category]
-Condition   : [Used - Good / Used - Fair / etc.]
-Description :
-  [Sentence 1: what it is and key specs (year, model, hours/miles if known).]
-  [Sentence 2: condition summary from the listing.]
-  [Sentence 3: why this is a deal -- mention government surplus if relevant.]
-  Local pickup only -- {your_location}. Message me for more details and photos.
-================================================
-
-## Final Summary
-
-Print one line per item:
-  [KEEP/SKIP] #[n] Item name | Site: [auction site] | Bid: $X | Market: $Z | FB List: $Y | Profit: $P | Ends: [date]
-
-Then print totals:
-  "Scanned: X  |  Worth listing: Y  |  Skipped (low margin): Z"
-
-## STEP 4: Output JSON for caching
-
-IMPORTANT: After the summary, output a JSON block with ALL kept items so they can
-be cached. Use this exact format:
+Then print a summary line and this JSON block:
 
 ```json
 {{
   "items": [
     {{
-      "title": "item title",
-      "lot": "lot number",
-      "site": "auction site name",
-      "url": "direct listing URL",
-      "bid": 123,
-      "market_value": 456,
-      "fb_price": 410,
-      "pickup": "City, ST",
-      "ends": "2026-03-25",
-      "photos": ["url1", "url2"],
-      "fb_title": "FB listing title",
-      "fb_description": "FB listing description",
-      "fb_category": "FB category",
-      "fb_condition": "Used - Good"
+      "title": "item title", "lot": "lot#", "site": "site", "url": "url",
+      "bid": 0, "market_value": 0, "fb_price": 0, "pickup": "City, ST",
+      "ends": "2026-03-25", "photos": [], "fb_title": "", "fb_description": "",
+      "fb_category": "", "fb_condition": "Used - Good"
     }}
   ]
 }}
 ```
 
-This JSON block is REQUIRED — do not skip it even if zero items were kept.
-If zero items, output: ```json {{"items": []}} ```
+If zero items kept, output ```json {{"items": []}} ```
 """
 
 
@@ -408,7 +281,7 @@ async def main() -> None:
             prompt=build_scan_prompt(config, cache),
             options=ClaudeAgentOptions(
                 allowed_tools=["WebFetch", "WebSearch"],
-                max_turns=35,
+                max_turns=15,
             ),
             log_file=log_file,
         )
