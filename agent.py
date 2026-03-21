@@ -1,29 +1,25 @@
 """
-GovDeals Arbitrage Agent
+GovDeals Deal Scanner
 
 Finds government surplus auction items on GovDeals.com within your area
-and lists them on Facebook Marketplace at 80% markup to test demand before bidding.
+and shows you the ones worth bidding on based on resale value.
 
 Workflow:
-    1. Searches GovDeals.com for items near you based on config.json
-    2. Checks approximate market value — skips items where 80% markup
-       would price them above what they actually sell for
-    3. Prints formatted FB Marketplace listings (using GovDeals photos)
-    4. Asks which items to post (each one, or all at once)
-    5. Posts approved items to Facebook Marketplace via browser automation
-    6. If people message you on Facebook -> go bid on GovDeals yourself
+    1. Searches GovDeals.com and PublicSurplus for items near you
+    2. Checks approximate market value on eBay sold listings
+    3. Filters out anything where the margin isn't worth it
+    4. Prints the good deals with bid price, market value, and profit estimate
 
 Requirements:
-    pip install claude-agent-sdk anyio
-    npx @playwright/mcp@latest   (only needed with --post)
+    pip install claude-agent-sdk anyio requests beautifulsoup4
 
 Setup:
-    1. Edit config.json — set your_city_state and your zip code
-    2. If using --post, make sure you are logged into Facebook in the browser
+    1. Edit config.json — set your_city_state, your_zip, and state
+    2. Run: python agent.py
 
 Usage:
-    python agent.py              # Scan GovDeals, print listings
-    python agent.py --post       # Scan, confirm each item, then post to Facebook
+    python agent.py              # Scan and print deals
+    python agent.py --config other.json  # Use a different config file
 """
 
 import anyio
@@ -37,14 +33,13 @@ from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMes
 CACHE_PATH = "found_items.json"
 
 DEFAULT_CONFIG = {
-    "markup_percent": 80,
     "max_listings_per_search": 3,
     "your_city_state": "Phoenix, AZ",
     "your_zip": "85001",
     "radius_miles": 100,
     "state": "AZ",
     "max_bid": 1500,
-    "max_daily_posts": 5,
+    "min_profit": 100,
     "searches": [
         {"keywords": "", "category": "Tools & Equipment"},
         {"keywords": "", "category": "Electronics & Computers"},
@@ -105,42 +100,6 @@ def build_scan_prompt() -> str:
     )
 
 
-def build_post_prompt(config: dict, scan_results: str, items_to_post: str) -> str:
-    your_location = config.get("your_city_state", "Phoenix, AZ")
-    max_daily_posts = config.get("max_daily_posts", 5)
-
-    return f"""You are a Facebook Marketplace posting agent.
-
-The user has already scanned GovDeals and selected items to post.
-Below are the full scan results. Post ONLY the items specified in the selection.
-
-SELECTION: {items_to_post}
-
-SCAN RESULTS:
-{scan_results}
-
-## Instructions
-
-For each selected item, post it to Facebook Marketplace:
-
-1. Navigate to https://www.facebook.com/marketplace/create/item
-2. **Photos**: Download each GovDeals photo URL to a temp file, then upload all of them.
-   Use every photo available from the listing — more photos = more buyer trust.
-3. **Title**: Use the FB title from the listing (max 100 chars)
-4. **Price**: FB list price as a plain number (no $ sign)
-5. **Category**: Closest Facebook Marketplace category
-6. **Condition**: As listed (Used - Good unless otherwise noted)
-7. **Description**: Use the FB description from the listing
-8. **Location**: {your_location}
-9. Click "Next" then "Publish"
-10. Wait for the success confirmation before starting the next listing
-
-STOP immediately and notify the user if you are not logged into Facebook.
-Post a maximum of {max_daily_posts} items total — stop after that even if more were selected.
-After all postings, print how many were successfully posted.
-"""
-
-
 async def stream_query(prompt: str, options: ClaudeAgentOptions, log_file=None) -> str:
     """Run a query, print output live, and return the full text."""
     full_text = []
@@ -187,38 +146,33 @@ async def main() -> None:
         print("Before running, open config.json and update:")
         print("  your_city_state  — your city and state  (e.g. 'Tucson, AZ')")
         print("  your_zip         — your ZIP code        (e.g. '85701')")
+        print("  state            — two-letter state code (e.g. 'AZ')")
         print("  radius_miles     — pickup radius        (default 100)")
         print()
         print("Then run:  python agent.py")
-        print("     or:   python agent.py --post   (to also post to Facebook)")
         sys.exit(0)
 
-    should_post = "--post" in args
     config = load_config(config_path)
     cache = load_cache()
 
-    markup = config.get("markup_percent", 80)
     searches = config.get("searches", [])
     radius = config.get("radius_miles", 100)
     max_bid = config.get("max_bid", 1500)
-    max_daily_posts = config.get("max_daily_posts", 5)
+    min_profit = config.get("min_profit", 100)
 
-    print("GovDeals Arbitrage Agent")
+    print("GovDeals Deal Scanner")
     print("=" * 60)
-    print(f"Location       : {config.get('your_city_state')}  (ZIP {config.get('your_zip')})  within {radius} miles")
-    print(f"Markup         : {markup}%  →  FB price = bid x {1 + markup/100:.2f}")
-    print(f"Max bid        : ${max_bid}  (capital limit)")
-    print(f"Max daily posts: {max_daily_posts}")
-    print(f"Categories     : {len(searches)}")
-    print(f"Cached items   : {len(cache.get('items', []))}")
-    print(f"Mode           : {'SCAN + CONFIRM + POST' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
+    print(f"Location    : {config.get('your_city_state')}  (ZIP {config.get('your_zip')})  within {radius} miles")
+    print(f"Max bid     : ${max_bid}")
+    print(f"Min profit  : ${min_profit}")
+    print(f"Searches    : {len(searches)}")
+    print(f"Cached items: {len(cache.get('items', []))}")
     print("=" * 60)
 
     import datetime
     log_path = f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     print(f"Saving output to: {log_path}\n")
 
-    # Phase 1: Always scan first
     with open(log_path, "w", encoding="utf-8") as log_file:
         scan_results = await stream_query(
             prompt=build_scan_prompt(),
@@ -237,52 +191,7 @@ async def main() -> None:
             log_file=log_file,
         )
 
-    # Save found items to cache
-    cache = save_to_cache(scan_results, cache)
-
-    if not should_post:
-        return
-
-    # Phase 2: Ask which items to post
-    print("\n" + "=" * 60)
-    print("Which items do you want to post to Facebook Marketplace?")
-    print("  all        → post every item above")
-    print("  1,3,5      → post specific item numbers")
-    print("  none       → don't post anything")
-    print()
-    choice = input("Your choice: ").strip().lower()
-
-    if not choice or choice == "none":
-        print("Nothing posted.")
-        return
-
-    if choice == "all":
-        items_to_post = "Post ALL items marked ✅ WORTH LISTING in the scan results."
-    else:
-        items_to_post = f"Post only items numbered: {choice}"
-
-    # Phase 3: Post selected items
-    print()
-    print("=" * 60)
-    print(f"Posting: {items_to_post}")
-    print("=" * 60)
-
-    with open(log_path, "a", encoding="utf-8") as log_file:
-        log_file.write("\n\n=== POST PHASE ===\n")
-        await stream_query(
-            prompt=build_post_prompt(config, scan_results, items_to_post),
-            options=ClaudeAgentOptions(
-                allowed_tools=["WebFetch", "WebSearch"],
-                max_turns=20,
-                mcp_servers={
-                    "playwright": {
-                        "command": "npx",
-                        "args": ["@playwright/mcp@latest"],
-                    }
-                },
-            ),
-            log_file=log_file,
-        )
+    save_to_cache(scan_results, cache)
 
 
 if __name__ == "__main__":

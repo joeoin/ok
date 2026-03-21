@@ -11,10 +11,10 @@ Run: `cat config.json`
 Extract these values:
 - `state` — two-letter state code
 - `your_zip` — ZIP code for proximity filtering
-- `your_city_state` — city and state for FB listing location line
+- `your_city_state` — city and state
 - `radius_miles` — max pickup distance
 - `max_bid` — skip items at or above this bid
-- `markup_percent` — multiplier = 1 + markup_percent / 100
+- `min_profit` — minimum estimated profit to keep an item (default 100)
 - `max_listings_per_search` — max URLs to evaluate per search entry
 - `searches` — list of `{category, keywords}` pairs
 
@@ -74,9 +74,9 @@ python tools/check_market_value.py --item "<title>"
 
 Compute:
 - `market_value` = `median_price` from the tool output (use 0 if tool failed)
-- `fb_price` = `round(market_value * 0.90 / 5) * 5`
-- Discard if `fb_price < current_bid * multiplier`
+- `profit` = `market_value - current_bid`
 - Discard if `market_value` is 0 (no data)
+- Discard if `profit` < `min_profit`
 
 ---
 
@@ -90,10 +90,10 @@ Then emit the JSON block.
 
 ```
 ITEM: [title] | LOT: [lot#] | SITE: [site] | URL: [url]
-BID: $X | MARKET: $Y | FB PRICE: $Z | PROFIT: $P | ENDS: [date]
-PICKUP: [city, state] | PHOTOS: [photo url 1] [photo url 2] ...
-FB TITLE: [max 100 chars, plain and descriptive]
-FB DESCRIPTION: [3 sentences describing condition and features. End with "Local pickup only — <your_city_state>."]
+BID: $X | MARKET VALUE: $Y | EST. PROFIT: $P | ENDS: [date]
+PICKUP: [city, state]
+PHOTOS: [photo url 1] [photo url 2] ...
+WHY IT'S WORTH IT: [1-2 sentences on why this is a good deal]
 ```
 
 ### JSON block (required even if items list is empty):
@@ -108,14 +108,10 @@ FB DESCRIPTION: [3 sentences describing condition and features. End with "Local 
       "url": "",
       "bid": 0,
       "market_value": 0,
-      "fb_price": 0,
+      "profit": 0,
       "pickup": "City, ST",
       "ends": "YYYY-MM-DD",
-      "photos": [],
-      "fb_title": "",
-      "fb_description": "",
-      "fb_category": "Tools & Equipment",
-      "fb_condition": "Used - Good"
+      "photos": []
     }
   ]
 }
