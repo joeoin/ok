@@ -9,8 +9,9 @@ Workflow:
     2. Checks approximate market value — skips items where 80% markup
        would price them above what they actually sell for
     3. Prints formatted FB Marketplace listings (using GovDeals photos)
-    4. Optionally posts them to Facebook Marketplace via browser automation
-    5. If people message you on Facebook -> go bid on GovDeals yourself
+    4. Asks which items to post (each one, or all at once)
+    5. Posts approved items to Facebook Marketplace via browser automation
+    6. If people message you on Facebook -> go bid on GovDeals yourself
 
 Requirements:
     pip install claude-agent-sdk anyio
@@ -22,7 +23,7 @@ Setup:
 
 Usage:
     python agent.py              # Scan GovDeals, print listings
-    python agent.py --post       # Scan + post to Facebook Marketplace
+    python agent.py --post       # Scan, confirm each item, then post to Facebook
 """
 
 import anyio
@@ -62,7 +63,7 @@ def load_config(config_path: str) -> dict:
     return DEFAULT_CONFIG
 
 
-def build_prompt(config: dict, should_post: bool) -> str:
+def build_scan_prompt(config: dict) -> str:
     markup = config.get("markup_percent", 80)
     multiplier = 1 + markup / 100
     max_per = config.get("max_listings_per_search", 5)
@@ -71,7 +72,6 @@ def build_prompt(config: dict, should_post: bool) -> str:
     radius = config.get("radius_miles", 100)
     state = config.get("state", "AZ")
     max_bid = config.get("max_bid", 1500)
-    max_daily_posts = config.get("max_daily_posts", 5)
     searches = config.get("searches", [])
 
     search_lines = ""
@@ -80,33 +80,9 @@ def build_prompt(config: dict, should_post: bool) -> str:
         kw = f'  keywords="{s["keywords"]}"' if s.get("keywords") else ""
         search_lines += f"  {i}. Category: {cat}{kw}\n"
 
-    post_instructions = ""
-    if should_post:
-        post_instructions = f"""
-## STEP 3: Post Each Approved Item to Facebook Marketplace
-
-For EACH item that passed the value check, post it to Facebook Marketplace:
-
-1. Navigate to https://www.facebook.com/marketplace/create/item
-2. **Photos**: Download each GovDeals photo URL to a temp file, then upload all of them.
-   Use every photo available from the listing — more photos = more buyer trust.
-3. **Title**: Use the FB title you prepared (max 100 chars)
-4. **Price**: FB price as a plain number (no $ sign)
-5. **Category**: Closest Facebook Marketplace category
-6. **Condition**: "Used - Good" unless listing clearly says otherwise
-7. **Description**: Use the FB description you prepared
-8. **Location**: {your_location}
-9. Click "Next" then "Publish"
-10. Wait for the success confirmation before starting the next listing
-
-STOP immediately and notify the user if you are not logged into Facebook.
-Post a maximum of {max_daily_posts} items total — stop after that even if more are approved.
-After all postings, print how many were successfully posted.
-"""
-
     return f"""You are a government surplus arbitrage agent. Your job is to find
-auction items on GovDeals.com near {your_location} and list them on Facebook
-Marketplace to test buyer demand — before the user ever spends a dollar bidding.
+auction items on GovDeals.com near {your_location} and prepare Facebook
+Marketplace listings to test buyer demand — before the user ever spends a dollar bidding.
 
 ════════════════════════════════════════
  PRICING RULES
@@ -173,19 +149,15 @@ Calculate the Facebook listing price for kept items:
   FB list price = market_value × 0.90, rounded to nearest $5
   Goal: price it just under market so it looks like a deal and attracts serious buyers fast.
 
-Example: John Deere Gator 4x2
-  Current bid $500  →  floor = $900
-  Market value ≈ $3,500  →  FB list price = $3,150  ✅ KEEP
-  Potential profit if you win at current bid: $3,150 − $500 = $2,650
-
 Only proceed to the listing format for KEPT items.
 ────────────────────────────────────────────────────────────────
 
 ## STEP 3: Format Each Kept Item
 
-Print each item in this format:
+Number each item starting from 1. Print each item in this format:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ITEM #          : [number]
 ITEM            : [full title]
 LOT #           : [lot number]
 GOVDEALS LINK   : [URL]
@@ -209,15 +181,70 @@ Description :
   [Sentence 3: why this is a deal — mention government surplus if relevant.]
   Local pickup only — {your_location}. Message me for more details and photos.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{post_instructions}
+
 ## Final Summary
 
 Print one line per item:
-  [✅/❌] Item name | Bid: $X | Market: $Z | FB List: $Y | Profit: $P | Ends: [date]
+  [✅/❌] #[n] Item name | Bid: $X | Market: $Z | FB List: $Y | Profit: $P | Ends: [date]
 
 Then print totals:
   "Scanned: X  |  Worth listing: Y  |  Skipped (low margin): Z"
 """
+
+
+def build_post_prompt(config: dict, scan_results: str, items_to_post: str) -> str:
+    your_location = config.get("your_city_state", "Phoenix, AZ")
+    max_daily_posts = config.get("max_daily_posts", 5)
+
+    return f"""You are a Facebook Marketplace posting agent.
+
+The user has already scanned GovDeals and selected items to post.
+Below are the full scan results. Post ONLY the items specified in the selection.
+
+SELECTION: {items_to_post}
+
+SCAN RESULTS:
+{scan_results}
+
+## Instructions
+
+For each selected item, post it to Facebook Marketplace:
+
+1. Navigate to https://www.facebook.com/marketplace/create/item
+2. **Photos**: Download each GovDeals photo URL to a temp file, then upload all of them.
+   Use every photo available from the listing — more photos = more buyer trust.
+3. **Title**: Use the FB title from the listing (max 100 chars)
+4. **Price**: FB list price as a plain number (no $ sign)
+5. **Category**: Closest Facebook Marketplace category
+6. **Condition**: As listed (Used - Good unless otherwise noted)
+7. **Description**: Use the FB description from the listing
+8. **Location**: {your_location}
+9. Click "Next" then "Publish"
+10. Wait for the success confirmation before starting the next listing
+
+STOP immediately and notify the user if you are not logged into Facebook.
+Post a maximum of {max_daily_posts} items total — stop after that even if more were selected.
+After all postings, print how many were successfully posted.
+"""
+
+
+async def stream_query(prompt: str, options: ClaudeAgentOptions) -> str:
+    """Run a query, print output live, and return the full text."""
+    full_text = []
+    async for message in query(prompt=prompt, options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if hasattr(block, "text"):
+                    print(block.text, end="", flush=True)
+                    full_text.append(block.text)
+        elif isinstance(message, ResultMessage):
+            print("\n" + message.result)
+            full_text.append(message.result)
+        elif isinstance(message, SystemMessage) and message.subtype == "init":
+            session_id = message.data.get("session_id", "")
+            if session_id:
+                print(f"Session: {session_id}\n")
+    return "".join(full_text)
 
 
 async def main() -> None:
@@ -250,17 +277,11 @@ async def main() -> None:
     should_post = "--post" in args
     config = load_config(config_path)
 
-    mcp_servers = {}
-    if should_post:
-        mcp_servers["playwright"] = {
-            "command": "npx",
-            "args": ["@playwright/mcp@latest"],
-        }
-
     markup = config.get("markup_percent", 80)
     searches = config.get("searches", [])
     radius = config.get("radius_miles", 100)
     max_bid = config.get("max_bid", 1500)
+    max_daily_posts = config.get("max_daily_posts", 5)
 
     print("GovDeals Arbitrage Agent")
     print("=" * 60)
@@ -269,26 +290,54 @@ async def main() -> None:
     print(f"Max bid        : ${max_bid}  (capital limit)")
     print(f"Max daily posts: {max_daily_posts}")
     print(f"Categories     : {len(searches)}")
-    print(f"Mode           : {'SCAN + POST to Facebook Marketplace' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
+    print(f"Mode           : {'SCAN + CONFIRM + POST' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
     print("=" * 60)
 
-    async for message in query(
-        prompt=build_prompt(config, should_post),
+    # Phase 1: Always scan first
+    scan_results = await stream_query(
+        prompt=build_scan_prompt(config),
+        options=ClaudeAgentOptions(allowed_tools=["WebFetch", "WebSearch"]),
+    )
+
+    if not should_post:
+        return
+
+    # Phase 2: Ask which items to post
+    print("\n" + "=" * 60)
+    print("Which items do you want to post to Facebook Marketplace?")
+    print("  all        → post every item above")
+    print("  1,3,5      → post specific item numbers")
+    print("  none       → don't post anything")
+    print()
+    choice = input("Your choice: ").strip().lower()
+
+    if not choice or choice == "none":
+        print("Nothing posted.")
+        return
+
+    if choice == "all":
+        items_to_post = "Post ALL items marked ✅ WORTH LISTING in the scan results."
+    else:
+        items_to_post = f"Post only items numbered: {choice}"
+
+    # Phase 3: Post selected items
+    print()
+    print("=" * 60)
+    print(f"Posting: {items_to_post}")
+    print("=" * 60)
+
+    await stream_query(
+        prompt=build_post_prompt(config, scan_results, items_to_post),
         options=ClaudeAgentOptions(
             allowed_tools=["WebFetch", "WebSearch"],
-            mcp_servers=mcp_servers,
+            mcp_servers={
+                "playwright": {
+                    "command": "npx",
+                    "args": ["@playwright/mcp@latest"],
+                }
+            },
         ),
-    ):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if hasattr(block, "text"):
-                    print(block.text, end="", flush=True)
-        elif isinstance(message, ResultMessage):
-            print("\n" + message.result)
-        elif isinstance(message, SystemMessage) and message.subtype == "init":
-            session_id = message.data.get("session_id", "")
-            if session_id:
-                print(f"Session: {session_id}\n")
+    )
 
 
 if __name__ == "__main__":
