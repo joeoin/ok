@@ -1,17 +1,20 @@
 """
-GovDeals Deal Scanner
+GovDeals Arbitrage Agent
 
-Finds government surplus auction items on GovDeals.com within your area
-and shows you the ones worth bidding on based on resale value.
+Finds government surplus auction items near you, checks resale value,
+and optionally posts them to Facebook Marketplace to test demand before bidding.
 
 Workflow:
     1. Searches GovDeals.com and PublicSurplus for items near you
-    2. Checks approximate market value on eBay sold listings
+    2. Checks eBay sold listings for market value
     3. Filters out anything where the margin isn't worth it
     4. Prints the good deals with bid price, market value, and profit estimate
+    5. (--post) Asks which items to post, then posts them to Facebook Marketplace
 
 Requirements:
-    pip install claude-agent-sdk anyio requests beautifulsoup4
+    pip install claude-agent-sdk anyio requests beautifulsoup4 playwright
+    playwright install chromium --with-deps
+    npx @playwright/mcp@latest   (only needed with --post)
 
 Setup:
     1. Edit config.json — set your_city_state, your_zip, and state
@@ -19,6 +22,7 @@ Setup:
 
 Usage:
     python agent.py              # Scan and print deals
+    python agent.py --post       # Scan, confirm each item, then post to Facebook
     python agent.py --config other.json  # Use a different config file
 """
 
@@ -100,6 +104,18 @@ def build_scan_prompt() -> str:
     )
 
 
+def build_post_prompt(scan_results: str, items_to_post: str) -> str:
+    return (
+        "You are operating under the WAT framework (Workflows, Agents, Tools).\n"
+        "Your task: post selected auction items to Facebook Marketplace.\n\n"
+        "Read `workflows/post_facebook.md` and follow it step by step.\n"
+        "Runtime config is in `config.json`.\n\n"
+        f"ITEM SELECTION: {items_to_post}\n\n"
+        "SCAN RESULTS (post ONLY the items matching the selection above):\n"
+        f"{scan_results}\n"
+    )
+
+
 async def stream_query(prompt: str, options: ClaudeAgentOptions, log_file=None) -> str:
     """Run a query, print output live, and return the full text."""
     full_text = []
@@ -152,6 +168,8 @@ async def main() -> None:
         print("Then run:  python agent.py")
         sys.exit(0)
 
+    should_post = "--post" in args
+
     config = load_config(config_path)
     cache = load_cache()
 
@@ -159,26 +177,30 @@ async def main() -> None:
     radius = config.get("radius_miles", 100)
     max_bid = config.get("max_bid", 1500)
     min_profit = config.get("min_profit", 100)
+    max_daily_posts = config.get("max_daily_posts", 5)
 
-    print("GovDeals Deal Scanner")
+    print("GovDeals Arbitrage Agent")
     print("=" * 60)
     print(f"Location    : {config.get('your_city_state')}  (ZIP {config.get('your_zip')})  within {radius} miles")
     print(f"Max bid     : ${max_bid}")
     print(f"Min profit  : ${min_profit}")
     print(f"Searches    : {len(searches)}")
     print(f"Cached items: {len(cache.get('items', []))}")
+    print(f"Mode        : {'SCAN + POST' if should_post else 'SCAN ONLY  (add --post to also post to Facebook)'}")
     print("=" * 60)
 
     import datetime
     log_path = f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     print(f"Saving output to: {log_path}\n")
 
+    # Phase 1: Scan for deals
     with open(log_path, "w", encoding="utf-8") as log_file:
         scan_results = await stream_query(
             prompt=build_scan_prompt(),
             options=ClaudeAgentOptions(
                 allowed_tools=["Bash", "Read"],
                 max_turns=25,
+                model="claude-haiku-4-5",
                 system_prompt=(
                     "You are an agent operating under the WAT framework (Workflows, Agents, Tools). "
                     "Your ONLY job is to execute the workflow in workflows/scan_govdeals.md exactly as written. "
@@ -209,6 +231,57 @@ async def main() -> None:
         )
 
     save_to_cache(scan_results, cache)
+
+    if not should_post:
+        return
+
+    # Phase 2: Ask which items to post
+    print("\n" + "=" * 60)
+    print("Which items do you want to post to Facebook Marketplace?")
+    print("  all     → post every item from the scan above")
+    print("  1,3,5   → post specific item numbers")
+    print("  none    → don't post anything")
+    print()
+    choice = input("Your choice: ").strip().lower()
+
+    if not choice or choice == "none":
+        print("Nothing posted.")
+        return
+
+    if choice == "all":
+        items_to_post = "Post ALL items listed in the scan results."
+    else:
+        items_to_post = f"Post only items numbered: {choice}"
+
+    # Phase 3: Post to Facebook Marketplace
+    print()
+    print("=" * 60)
+    print(f"Posting: {items_to_post}")
+    print(f"Make sure you are logged into Facebook in the browser.")
+    print("=" * 60)
+    print()
+
+    await stream_query(
+        prompt=build_post_prompt(scan_results, items_to_post),
+        options=ClaudeAgentOptions(
+            allowed_tools=["Bash", "Read"],
+            max_turns=max_daily_posts * 15,
+            model="claude-haiku-4-5",
+            mcp_servers={
+                "playwright": {
+                    "command": "npx",
+                    "args": ["@playwright/mcp@latest"],
+                }
+            },
+            system_prompt=(
+                "You are an agent operating under the WAT framework (Workflows, Agents, Tools). "
+                "Your ONLY job is to execute the workflow in workflows/post_facebook.md exactly as written. "
+                "Follow every step in order. Do not skip steps or add extra actions. "
+                "Use the Playwright browser tools for all Facebook interactions. "
+                "Use Bash only to download photos to temp files before uploading them."
+            ),
+        ),
+    )
 
 
 if __name__ == "__main__":
