@@ -52,10 +52,11 @@ def search_govdeals(state: str, keywords: str, max_results: int) -> list[dict]:
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
-                headless=False,
+                headless=True,
                 args=[
                     "--disable-blink-features=AutomationControlled",
-                    "--window-size=1920,1080",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
                 ],
             )
             context = browser.new_context(
@@ -73,7 +74,6 @@ def search_govdeals(state: str, keywords: str, max_results: int) -> list[dict]:
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             page.goto(search_url, timeout=30000, wait_until="domcontentloaded")
-            time.sleep(15)  # Wait for Angular SPA to render search results
 
             # Check if we got blocked
             if "Access Denied" in (page.title() or ""):
@@ -83,7 +83,7 @@ def search_govdeals(state: str, keywords: str, max_results: int) -> list[dict]:
 
             # Wait for asset links to appear (GovDeals uses /en/asset/ not /en/auction/)
             try:
-                page.wait_for_selector("a[href*='/en/asset/']", timeout=15000)
+                page.wait_for_selector("a[href*='/en/asset/']", timeout=20000)
             except PlaywrightTimeout:
                 print("GovDeals: timed out waiting for results", file=sys.stderr)
                 browser.close()

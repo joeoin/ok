@@ -145,17 +145,31 @@ def parse_publicsurplus(soup: BeautifulSoup, url: str) -> dict:
 
 def fetch_with_playwright(url: str) -> str:
     """Fetch a JS-rendered page using Playwright and return the HTML."""
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
         )
-        page = browser.new_page()
+        page = browser.new_page(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
+        )
         page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page.goto(url, timeout=30000, wait_until="domcontentloaded")
-        time.sleep(10)
+        # Wait for the bid price to appear instead of sleeping blindly
+        try:
+            page.wait_for_selector("text=/Current Bid|High Bid|Starting Bid/i", timeout=10000)
+        except PlaywrightTimeout:
+            pass  # Page may have loaded differently — use whatever content we have
         html = page.content()
         browser.close()
     return html

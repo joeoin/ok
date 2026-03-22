@@ -6,6 +6,7 @@
   "radius_miles": 100,
   "state": "AZ",
   "max_bid": 1500,
+  "min_profit": 100,
   "max_daily_posts": 5,
   "searches": [
     {"keywords": "", "category": "Tools & Equipment"},
