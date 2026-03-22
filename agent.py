@@ -38,8 +38,22 @@ CACHE_PATH = "found_items.json"
 
 # The SDK ships a bundled claude binary that may not have credentials.
 # Use the system claude (which is authenticated) instead.
+import platform as _platform
 import shutil as _shutil
 CLAUDE_PATH = _shutil.which("claude") or "claude"
+
+# On Windows, anyio's open_process cannot directly spawn .cmd files (they are
+# batch scripts, not PE executables).  Monkey-patch the SDK's command builder
+# to wrap the call with "cmd.exe /c" so the subprocess starts correctly.
+if _platform.system() == "Windows" and CLAUDE_PATH.lower().endswith(".cmd"):
+    from claude_agent_sdk._internal.transport import subprocess_cli as _subcli
+    _orig_build = _subcli.SubprocessCLITransport._build_command
+    def _win_build_command(self):
+        cmd = _orig_build(self)
+        if cmd and cmd[0].lower().endswith(".cmd"):
+            return ["cmd.exe", "/c"] + cmd
+        return cmd
+    _subcli.SubprocessCLITransport._build_command = _win_build_command
 
 
 DEFAULT_CONFIG = {
