@@ -3,10 +3,14 @@
 
 Usage:
     python tools/fetch_listing.py --url "https://www.govdeals.com/..."
+    python tools/fetch_listing.py --url "https://www.publicsurplus.com/..."
 
 Output: JSON object with listing fields to stdout.
 On failure: JSON with {"error": "..."} and exit code 1.
-Retries up to 3x with backoff on rate-limit (429) responses.
+
+Requirements:
+    pip install requests beautifulsoup4
+    pip install playwright && playwright install chromium   (only needed for GovDeals)
 """
 
 import argparse
@@ -26,8 +30,9 @@ HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "Chrome/124.0.0.0 Safari/537.36"
     ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
 
@@ -40,26 +45,21 @@ def extract_price(text: str) -> float:
 def parse_govdeals(soup: BeautifulSoup, url: str) -> dict:
     result: dict = {"url": url, "site": "govdeals"}
 
-    # Title
     h1 = soup.find("h1") or soup.find("h2")
     result["title"] = h1.get_text(strip=True) if h1 else ""
 
-    # Lot number from URL: /en/asset/{assetId}/{sellerId} or legacy ?invId=X
     lot_m = re.search(r"/en/asset/(\d+/\d+)", url) or re.search(r"[?&]invId=(\w+)", url)
     result["lot"] = lot_m.group(1) if lot_m else ""
 
-    # Current bid — scan labels for "Current Bid" / "High Bid"
     result["current_bid"] = 0.0
-    for label in soup.find_all(string=re.compile(r"Current Bid|High Bid", re.I)):
+    for label in soup.find_all(string=re.compile(r"Current Bid|High Bid|Starting Bid", re.I)):
         parent = label.find_parent()
         if parent:
-            price_text = parent.get_text(" ", strip=True)
-            val = extract_price(price_text)
+            val = extract_price(parent.get_text(" ", strip=True))
             if val:
                 result["current_bid"] = val
                 break
 
-    # End date
     result["end_date"] = ""
     for label in soup.find_all(string=re.compile(r"Close Date|End Date|Auction Ends", re.I)):
         parent = label.find_parent()
@@ -70,7 +70,6 @@ def parse_govdeals(soup: BeautifulSoup, url: str) -> dict:
                 result["end_date"] = date_m.group(0)
                 break
 
-    # Location
     result["location"] = ""
     for label in soup.find_all(string=re.compile(r"^Location$|^Pickup Location$", re.I)):
         parent = label.find_parent()
@@ -80,7 +79,6 @@ def parse_govdeals(soup: BeautifulSoup, url: str) -> dict:
                 result["location"] = sib.get_text(strip=True)[:100]
                 break
 
-    # Photos — img tags with govdeals photo CDN patterns
     photos = []
     for img in soup.find_all("img", src=True):
         src = img["src"]
@@ -90,7 +88,6 @@ def parse_govdeals(soup: BeautifulSoup, url: str) -> dict:
             photos.append(src)
     result["photos"] = list(dict.fromkeys(photos))[:10]
 
-    # Description
     desc_el = (
         soup.find("div", id=re.compile(r"desc", re.I))
         or soup.find("div", class_=re.compile(r"desc|detail|item.?info", re.I))
@@ -143,8 +140,40 @@ def parse_publicsurplus(soup: BeautifulSoup, url: str) -> dict:
     return result
 
 
-def fetch_with_playwright(url: str) -> str:
-    """Fetch a JS-rendered page using Playwright and return the HTML."""
+def fetch_govdeals_api(url: str) -> dict | None:
+    """Try GovDeals item API endpoint directly (no browser needed)."""
+    # Extract asset ID and seller ID from URL like /en/asset/12345/678
+    m = re.search(r"/en/asset/(\d+)/(\d+)", url)
+    if not m:
+        return None
+    asset_id, seller_id = m.group(1), m.group(2)
+    try:
+        r = requests.get(
+            f"https://www.govdeals.com/api/v2/assets/{asset_id}",
+            params={"sellerId": seller_id},
+            headers={**HEADERS, "Accept": "application/json", "Referer": "https://www.govdeals.com/"},
+            timeout=15,
+        )
+        if r.status_code == 200 and "json" in r.headers.get("Content-Type", ""):
+            item = r.json()
+            return {
+                "url": url,
+                "site": "govdeals",
+                "title": item.get("title") or item.get("name", ""),
+                "lot": f"{asset_id}/{seller_id}",
+                "current_bid": float(item.get("currentBid") or item.get("currentPrice") or 0),
+                "end_date": (item.get("closeDate") or item.get("endDate") or "")[:10],
+                "location": item.get("location") or item.get("city") or "",
+                "photos": item.get("photos") or item.get("images") or [],
+                "description": item.get("description") or "",
+            }
+    except Exception as e:
+        print(f"GovDeals item API failed for {url}: {e}", file=sys.stderr)
+    return None
+
+
+def fetch_govdeals_playwright(url: str) -> str:
+    """Fetch GovDeals listing page via browser (fallback when API fails)."""
     from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
     with sync_playwright() as pw:
@@ -157,19 +186,18 @@ def fetch_with_playwright(url: str) -> str:
             ],
         )
         page = browser.new_page(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            )
+            user_agent=HEADERS["User-Agent"],
         )
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        page.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
         page.goto(url, timeout=30000, wait_until="domcontentloaded")
-        # Wait for the bid price to appear instead of sleeping blindly
         try:
-            page.wait_for_selector("text=/Current Bid|High Bid|Starting Bid/i", timeout=10000)
+            page.wait_for_selector(
+                "text=/Current Bid|High Bid|Starting Bid/i", timeout=12000
+            )
         except PlaywrightTimeout:
-            pass  # Page may have loaded differently — use whatever content we have
+            pass
         html = page.content()
         browser.close()
     return html
@@ -177,10 +205,19 @@ def fetch_with_playwright(url: str) -> str:
 
 def fetch(url: str) -> dict:
     if "govdeals.com" in url:
-        # GovDeals is a JS-rendered Angular app — needs Playwright
-        html = fetch_with_playwright(url)
-        soup = BeautifulSoup(html, "html.parser")
-        return parse_govdeals(soup, url)
+        # Try API first (no browser needed)
+        api_result = fetch_govdeals_api(url)
+        if api_result and api_result.get("title"):
+            return api_result
+        # Fall back to Playwright
+        try:
+            html = fetch_govdeals_playwright(url)
+            soup = BeautifulSoup(html, "html.parser")
+            return parse_govdeals(soup, url)
+        except ImportError:
+            raise RuntimeError(
+                "GovDeals requires a browser. Run: pip install playwright && playwright install chromium"
+            )
 
     r = requests.get(url, headers=HEADERS, timeout=20)
     r.raise_for_status()
@@ -212,7 +249,7 @@ def main():
             print(json.dumps({"error": str(e), "url": args.url}))
             sys.exit(1)
 
-    print(json.dumps({"error": "Max retries exceeded after rate limiting", "url": args.url}))
+    print(json.dumps({"error": "Max retries exceeded", "url": args.url}))
     sys.exit(1)
 
 
