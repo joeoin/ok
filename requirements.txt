@@ -2,4 +2,4 @@ claude-agent-sdk
 anyio
 requests
 beautifulsoup4
-playwright
+playwright==1.56.0
