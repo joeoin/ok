@@ -222,6 +222,7 @@ async def main() -> None:
                 max_turns=25,
                 model="claude-haiku-4-5",
                 cli_path=CLAUDE_PATH,
+                stderr=lambda line: print(f"[claude] {line}", file=sys.stderr, flush=True),
                 system_prompt=(
                     "You are an agent operating under the WAT framework (Workflows, Agents, Tools). "
                     "Your ONLY job is to execute the workflow in workflows/scan_govdeals.md exactly as written. "
@@ -289,6 +290,7 @@ async def main() -> None:
             max_turns=max_daily_posts * 15,
             model="claude-haiku-4-5",
             cli_path=CLAUDE_PATH,
+            stderr=lambda line: print(f"[claude] {line}", file=sys.stderr, flush=True),
             mcp_servers={
                 "playwright": {
                     "command": "npx",
