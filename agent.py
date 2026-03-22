@@ -36,24 +36,32 @@ from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMes
 
 CACHE_PATH = "found_items.json"
 
-# The SDK ships a bundled claude binary that may not have credentials.
-# Use the system claude (which is authenticated) instead.
 import platform as _platform
 import shutil as _shutil
 CLAUDE_PATH = _shutil.which("claude") or "claude"
 
-# On Windows, anyio's open_process cannot directly spawn .cmd files (they are
-# batch scripts, not PE executables).  Monkey-patch the SDK's command builder
-# to wrap the call with "cmd.exe /c" so the subprocess starts correctly.
+# On Windows, anyio cannot spawn .cmd batch scripts directly (not PE executables).
+# Find node.exe + cli.js and use those as the real executable instead.
+_NODE_PATH = None
+_CLI_JS_PATH = None
 if _platform.system() == "Windows" and CLAUDE_PATH.lower().endswith(".cmd"):
-    from claude_agent_sdk._internal.transport import subprocess_cli as _subcli
-    _orig_build = _subcli.SubprocessCLITransport._build_command
-    def _win_build_command(self):
-        cmd = _orig_build(self)
-        if cmd and cmd[0].lower().endswith(".cmd"):
-            return ["cmd.exe", "/c"] + cmd
-        return cmd
-    _subcli.SubprocessCLITransport._build_command = _win_build_command
+    import os as _os
+    _node = _shutil.which("node")
+    _npm_dir = _os.path.expandvars(r"%APPDATA%\npm")
+    _cli_js = _os.path.join(_npm_dir, "node_modules", "@anthropic-ai", "claude-code", "cli.js")
+    if _node and _os.path.exists(_cli_js):
+        _NODE_PATH = _node
+        _CLI_JS_PATH = _cli_js
+        # Monkey-patch the command builder to use node.exe + cli.js directly
+        from claude_agent_sdk._internal.transport import subprocess_cli as _subcli
+        _orig_build = _subcli.SubprocessCLITransport._build_command
+        def _win_build_command(self):
+            cmd = _orig_build(self)
+            # Replace the .cmd path with node + cli.js
+            if cmd and cmd[0].lower().endswith(".cmd"):
+                return [_NODE_PATH, _CLI_JS_PATH] + cmd[1:]
+            return cmd
+        _subcli.SubprocessCLITransport._build_command = _win_build_command
 
 
 DEFAULT_CONFIG = {
