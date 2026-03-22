@@ -6,6 +6,11 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# Skip slow setup when running as an SDK sub-agent
+if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = "sdk-py" ]; then
+  exit 0
+fi
+
 echo '{"async": true, "asyncTimeout": 300000}'
 
 # Install Python deps from requirements.txt

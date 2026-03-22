@@ -36,6 +36,12 @@ from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMes
 
 CACHE_PATH = "found_items.json"
 
+# The SDK ships a bundled claude binary that may not have credentials.
+# Use the system claude (which is authenticated) instead.
+import shutil as _shutil
+CLAUDE_PATH = _shutil.which("claude") or "claude"
+
+
 DEFAULT_CONFIG = {
     "max_listings_per_search": 3,
     "your_city_state": "Phoenix, AZ",
@@ -201,6 +207,7 @@ async def main() -> None:
                 allowed_tools=["Bash", "Read"],
                 max_turns=25,
                 model="claude-haiku-4-5",
+                cli_path=CLAUDE_PATH,
                 system_prompt=(
                     "You are an agent operating under the WAT framework (Workflows, Agents, Tools). "
                     "Your ONLY job is to execute the workflow in workflows/scan_govdeals.md exactly as written. "
@@ -267,6 +274,7 @@ async def main() -> None:
             allowed_tools=["Bash", "Read"],
             max_turns=max_daily_posts * 15,
             model="claude-haiku-4-5",
+            cli_path=CLAUDE_PATH,
             mcp_servers={
                 "playwright": {
                     "command": "npx",
