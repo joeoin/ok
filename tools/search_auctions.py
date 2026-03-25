@@ -33,87 +33,40 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-# Headers that trigger AJAX/partial responses on Prototype.js sites
-XHR_HEADERS = {
-    **HEADERS,
-    "X-Requested-With": "XMLHttpRequest",
-    "Accept": "text/html, */*; q=0.01",
-}
-
 
 # ── PublicSurplus ──────────────────────────────────────────────────────────────
 
-def search_publicsurplus(keywords: str, state: str, max_results: int) -> list[dict]:
-    """Search PublicSurplus.
-
-    Their search results are JavaScript-rendered. Strategy:
-    1. POST with XHR headers (Prototype.js AJAX pattern — may return HTML fragment)
-    2. GET with XHR headers
-    3. Plain GET — scan ALL hrefs for any pattern containing a numeric auction ID
-    """
+def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
+    """Search PublicSurplus using the /sms/browse/search endpoint with zip+radius filter."""
     results = []
-    base_url = f"https://www.publicsurplus.com/sms/all,{state.lower()}/browse/search"
-    params = {"keyWord": keywords, "sortBy": "timeLeft", "page": "1", "posting": "y"}
+    try:
+        r = requests.get(
+            "https://www.publicsurplus.com/sms/browse/search",
+            params={
+                "posting": "y",
+                "page": "1",
+                "sortBy": "timeLeft",
+                "keyWord": keywords,
+                "catId": "",
+                "endHours": "-1",
+                "startHours": "-1",
+                "lowerPrice": "",
+                "higherPrice": "",
+                "milesLocation": str(radius),
+                "zipCode": zip_code,
+                "region": "",
+                "search": "Search",
+            },
+            headers=HEADERS,
+            timeout=20,
+        )
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
 
-    soup = None
-    for method, extra_headers in [
-        ("POST", {**XHR_HEADERS, "Content-Type": "application/x-www-form-urlencoded",
-                  "Referer": "https://www.publicsurplus.com/sms/browse/search"}),
-        ("GET",  XHR_HEADERS),
-        ("GET",  HEADERS),
-    ]:
-        try:
-            if method == "POST":
-                r = requests.post(base_url, data=params, headers=extra_headers, timeout=20)
-            else:
-                r = requests.get(base_url, params=params, headers=extra_headers, timeout=20)
-            r.raise_for_status()
-
-            # If server returned JSON, parse it
-            if "json" in r.headers.get("content-type", ""):
-                try:
-                    data = r.json()
-                    items = (
-                        data.get("auctions") or data.get("items") or
-                        data.get("results") or (data if isinstance(data, list) else [])
-                    )
-                    for item in items:
-                        link = item.get("url") or item.get("link") or item.get("auctionUrl", "")
-                        title = (
-                            item.get("title") or item.get("name") or
-                            item.get("description", "")
-                        )
-                        if link and title:
-                            if not link.startswith("http"):
-                                link = "https://www.publicsurplus.com" + link
-                            results.append({"url": link, "title": title, "site": "publicsurplus"})
-                            if len(results) >= max_results:
-                                break
-                    if results:
-                        return results
-                except Exception:
-                    pass
-
-            soup = BeautifulSoup(r.text, "html.parser")
-            # Check if this response already has auction links; if so stop retrying
-            if any(
-                "auctionId=" in a["href"] or "/auction/view" in a["href"]
-                for a in soup.find_all("a", href=True)
-            ):
-                break
-        except Exception as e:
-            print(f"PublicSurplus attempt ({method}) error: {e}", file=sys.stderr)
-
-    if soup:
         seen = set()
-        # Auction link patterns observed in the wild:
-        #   /sms/auction/view?auctionId=12345
-        #   /sms/all,az/auction/view?auctionId=12345
-        #   /sms/browse/auctionView?id=12345
-        # Broadest safe match: any PS path that contains "auctionId=" or "/auction/view"
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            if "auctionId=" in href or "/auction/view" in href:
+            if "/auction/view" in href:
                 if not href.startswith("http"):
                     href = "https://www.publicsurplus.com" + href
                 if href not in seen:
@@ -124,12 +77,10 @@ def search_publicsurplus(keywords: str, state: str, max_results: int) -> list[di
                         if len(results) >= max_results:
                             break
 
-    if not results:
-        print(
-            f"PublicSurplus: 0 results for '{keywords}' in {state} "
-            f"(listings are JavaScript-rendered; XHR approach may not be sufficient)",
-            file=sys.stderr,
-        )
+        if not results:
+            print(f"PublicSurplus: 0 results for '{keywords}' near {zip_code}", file=sys.stderr)
+    except Exception as e:
+        print(f"PublicSurplus search error: {e}", file=sys.stderr)
     return results
 
 
@@ -274,6 +225,8 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--state", required=True, help="Two-letter state code, e.g. AZ")
+    p.add_argument("--zip", default="85001", help="ZIP code for PublicSurplus location filter")
+    p.add_argument("--radius", type=int, default=100, help="Search radius in miles")
     p.add_argument("--category", default="", help="Item category")
     p.add_argument("--keywords", default="", help="Search keywords (overrides --category)")
     p.add_argument("--max", type=int, default=3, help="Max results per site")
@@ -285,7 +238,7 @@ def main():
         sys.exit(1)
 
     results = []
-    results += search_publicsurplus(term, args.state, args.max)
+    results += search_publicsurplus(term, args.zip, args.radius, args.max)
     time.sleep(0.5)
     results += search_bidspotter(term, args.max)
     time.sleep(0.5)
