@@ -72,85 +72,79 @@ def _ps_catids_for_keyword(keywords: str) -> list[int]:
 
 
 def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
-    """Browse PublicSurplus category pages using Playwright."""
+    """Search PublicSurplus using zip+radius with Playwright (results are JS-rendered)."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         print("Playwright not installed: pip install playwright && python -m playwright install chromium", file=sys.stderr)
         return []
 
-    catids = _ps_catids_for_keyword(keywords)
-    if not catids:
-        print(f"PublicSurplus: no category mapping for '{keywords}'", file=sys.stderr)
-        return []
-
+    from urllib.parse import quote
     results = []
     seen = set()
 
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
 
-            for catid in catids:
-                if len(results) >= max_results:
-                    break
+            url = (
+                "https://www.publicsurplus.com/sms/browse/search"
+                f"?posting=y&page=1&sortBy=timeLeft&keyWord={quote(keywords)}"
+                f"&catId=&endHours=-1&startHours=-1&lowerPrice=&higherPrice="
+                f"&milesLocation={radius}&zipCode={zip_code}&region=&search=Search"
+            )
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(2000)
 
-                page = browser.new_page()
-                url = f"https://www.publicsurplus.com/sms/browse/cataucs?catid={catid}"
-                page.goto(url, wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(2000)
-
-                # Grab each auction card: title, price, location, time left
-                items = page.eval_on_selector_all(
-                    "a[href*='/auction/view']",
-                    """els => els.map(e => {
-                        const card = e.closest('.auction-item, .ps-card, .card, li, tr') || e.parentElement;
-                        const cardText = card ? card.innerText : '';
-                        const priceMatch = cardText.match(/\\$[\\d,]+(?:\\.\\d{2})?/);
-                        const lines = cardText.split('\\n').map(l => l.trim()).filter(Boolean);
-                        return {
-                            href: e.getAttribute('href'),
-                            text: (e.innerText || e.textContent || '').trim(),
-                            price: priceMatch ? priceMatch[0] : '',
-                            card_text: lines.slice(0, 6).join(' | ')
-                        };
-                    })"""
-                )
-
-                for item in items:
-                    href = item.get("href", "")
-                    title = item.get("text", "").strip()
-                    price = item.get("price", "")
-                    card_text = item.get("card_text", "")
-                    if not href or "/auction/view" not in href:
-                        continue
-                    full_url = "https://www.publicsurplus.com" + href if not href.startswith("http") else href
-                    auc_id = re.search(r"auc=(\d+)", full_url)
-                    key = auc_id.group(1) if auc_id else full_url
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    if len(title) < 4:
-                        title = f"Auction {key}"
-                    results.append({
-                        "url": full_url,
-                        "title": title,
-                        "price": price,
-                        "details": card_text,
-                        "site": "publicsurplus",
-                    })
-                    if len(results) >= max_results:
-                        break
-
-                page.close()
+            items = page.eval_on_selector_all(
+                "a[href*='/auction/view']",
+                """els => els.map(e => {
+                    const card = e.closest('.auction-item, .ps-card, .card, li, tr') || e.parentElement;
+                    const cardText = card ? card.innerText : '';
+                    const priceMatch = cardText.match(/\\$[\\d,]+(?:\\.\\d{2})?/);
+                    const lines = cardText.split('\\n').map(l => l.trim()).filter(Boolean);
+                    return {
+                        href: e.getAttribute('href'),
+                        text: (e.innerText || e.textContent || '').trim(),
+                        price: priceMatch ? priceMatch[0] : '',
+                        details: lines.slice(0, 6).join(' | ')
+                    };
+                })"""
+            )
 
             browser.close()
+
+        for item in items:
+            href = item.get("href", "")
+            title = item.get("text", "").strip()
+            price = item.get("price", "")
+            details = item.get("details", "")
+            if not href or "/auction/view" not in href:
+                continue
+            full_url = "https://www.publicsurplus.com" + href if not href.startswith("http") else href
+            auc_id = re.search(r"auc=(\d+)", full_url)
+            key = auc_id.group(1) if auc_id else full_url
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(title) < 4:
+                title = f"Auction {key}"
+            results.append({
+                "url": full_url,
+                "title": title,
+                "current_bid": price,
+                "details": details,
+                "site": "publicsurplus",
+            })
+            if len(results) >= max_results:
+                break
 
     except Exception as e:
         print(f"PublicSurplus error: {e}", file=sys.stderr)
 
     if not results:
-        print(f"PublicSurplus: 0 results for '{keywords}' (catids={catids})", file=sys.stderr)
+        print(f"PublicSurplus: 0 results for '{keywords}' within {radius} miles of {zip_code}", file=sys.stderr)
     return results
 
 
@@ -236,6 +230,40 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
     return []
 
 
+# ── eBay resale value ──────────────────────────────────────────────────────────
+
+def get_ebay_resale_value(title: str) -> str:
+    """Scrape eBay sold listings to estimate resale value."""
+    # Use first 5 meaningful words of the title as search query
+    words = [w for w in re.split(r"\W+", title) if len(w) > 2][:5]
+    query = " ".join(words)
+    if not query:
+        return "unknown"
+    try:
+        from urllib.parse import quote_plus
+        url = f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}&LH_Complete=1&LH_Sold=1&_sop=13"
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(r.text, "html.parser")
+        prices = []
+        for span in soup.select(".s-item__price"):
+            text = span.get_text(strip=True)
+            m = re.search(r"\$([\d,]+(?:\.\d{2})?)", text)
+            if m:
+                try:
+                    prices.append(float(m.group(1).replace(",", "")))
+                except ValueError:
+                    pass
+        if not prices:
+            return "no sold listings found"
+        prices.sort()
+        median = prices[len(prices) // 2]
+        low = prices[0]
+        high = prices[-1]
+        return f"${median:,.0f} median (${low:,.0f}–${high:,.0f} range, {len(prices)} sold)"
+    except Exception as e:
+        return f"lookup failed: {e}"
+
+
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 def main():
@@ -256,6 +284,10 @@ def main():
     results = []
     results += search_publicsurplus(term, args.zip, args.radius, args.max)
     results += search_ironplanet(term, args.max)
+
+    # Add eBay resale value to each result
+    for r in results:
+        r["ebay_resale_value"] = get_ebay_resale_value(r["title"])
 
     print(json.dumps(results, indent=2))
 
