@@ -36,51 +36,53 @@ HEADERS = {
 
 # ── PublicSurplus ──────────────────────────────────────────────────────────────
 
+def _ps_extract(soup, max_results):
+    seen = set()
+    results = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/auction/view" in href or "auctionId=" in href:
+            if not href.startswith("http"):
+                href = "https://www.publicsurplus.com" + href
+            if href not in seen:
+                seen.add(href)
+                title = a.get_text(strip=True)
+                if len(title) > 5:
+                    results.append({"url": href, "title": title, "site": "publicsurplus"})
+                    if len(results) >= max_results:
+                        break
+    return results
+
+
 def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
-    """Search PublicSurplus using the /sms/browse/search endpoint with zip+radius filter."""
+    """Search PublicSurplus.
+
+    Primary: /sms/browse/search with zip+radius (original working endpoint).
+    Fallback: /sms/all,{state}/browse/search state browse with keyword filter.
+    """
     results = []
     try:
+        # Primary search — zip/radius filtered
         r = requests.get(
             "https://www.publicsurplus.com/sms/browse/search",
             params={
-                "posting": "y",
-                "page": "1",
-                "sortBy": "timeLeft",
-                "keyWord": keywords,
-                "catId": "",
-                "endHours": "-1",
-                "startHours": "-1",
-                "lowerPrice": "",
-                "higherPrice": "",
-                "milesLocation": str(radius),
-                "zipCode": zip_code,
-                "region": "",
-                "search": "Search",
+                "posting": "y", "page": "1", "sortBy": "timeLeft",
+                "keyWord": keywords, "catId": "",
+                "endHours": "-1", "startHours": "-1",
+                "lowerPrice": "", "higherPrice": "",
+                "milesLocation": str(radius), "zipCode": zip_code,
+                "region": "", "search": "Search",
             },
             headers=HEADERS,
             timeout=20,
         )
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        seen = set()
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if "/auction/view" in href:
-                if not href.startswith("http"):
-                    href = "https://www.publicsurplus.com" + href
-                if href not in seen:
-                    seen.add(href)
-                    title = a.get_text(strip=True)
-                    if len(title) > 5:
-                        results.append({"url": href, "title": title, "site": "publicsurplus"})
-                        if len(results) >= max_results:
-                            break
-
-        if not results:
-            print(f"PublicSurplus: 0 results for '{keywords}' near {zip_code}", file=sys.stderr)
+        results = _ps_extract(BeautifulSoup(r.text, "html.parser"), max_results)
     except Exception as e:
-        print(f"PublicSurplus search error: {e}", file=sys.stderr)
+        print(f"PublicSurplus primary search error: {e}", file=sys.stderr)
+
+    if not results:
+        print(f"PublicSurplus: 0 results for '{keywords}' near {zip_code}", file=sys.stderr)
     return results
 
 
@@ -171,27 +173,42 @@ def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
 
 # ── Iron Planet ────────────────────────────────────────────────────────────────
 
+# Iron Planet keyword search loads results via JavaScript — useless for scraping.
+# Category browse pages load items in static HTML (confirmed from live debug).
+# Map keyword fragments → category browse path; default to Government Surplus
+# which covers tools, medical, HVAC, electrical, shop/consumer items.
+_IP_CATEGORIES = [
+    (["generator", "power equipment", "genset"],           "/Generators+and+Power+Equipment"),
+    (["truck", "trailer", "pickup"],                        "/Trucks+%26+Trailers"),
+    (["forklift", "warehouse", "pallet jack"],              "/Forklifts+and+Warehouse+Equipment"),
+    (["mower", "tractor", "farm", "lawn", "garden"],        "/Agriculture"),
+    (["crane"],                                              "/Cranes"),
+    (["excavator", "dozer", "loader", "skid steer"],        "/Construction"),
+    (["mining"],                                             "/Mining"),
+    (["oil", "gas", "pump"],                                "/Oil+%26+Gas"),
+]
+_IP_DEFAULT = "/Government+Surplus"  # tools, medical, hvac, shop items
+
+
+def _ip_browse_url(keywords: str) -> str:
+    kw = keywords.lower()
+    for terms, path in _IP_CATEGORIES:
+        if any(t in kw for t in terms):
+            return "https://www.ironplanet.com" + path
+    return "https://www.ironplanet.com" + _IP_DEFAULT
+
+
 def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
-    """Search Iron Planet via keyword search.
+    """Search Iron Planet via category browse (loads items in static HTML).
 
-    Item URL format confirmed from live HTML:
-      /for-sale/{Category-Year-Brand-Description-State}/{itemId}?...
-
-    The keyword search page always includes a few featured/promoted Arizona
-    items regardless of the search query. We filter these out by requiring
-    at least one meaningful keyword word to appear in the item title.
+    Item URL format: /for-sale/{Category-Year-Brand-Description-State}/{itemId}
     """
     results = []
-    # Words from the keyword that are long enough to be meaningful
     kw_words = [w for w in re.split(r"\W+", keywords.lower()) if len(w) > 3]
+    browse_url = _ip_browse_url(keywords)
 
     try:
-        r = requests.get(
-            "https://www.ironplanet.com/jsp/s/search.ips",
-            params={"kw": keywords},
-            headers=HEADERS,
-            timeout=20,
-        )
+        r = requests.get(browse_url, headers=HEADERS, timeout=20)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
@@ -210,12 +227,10 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
             if len(title) < 6:
                 slug = href.split("?")[0].rsplit("/", 2)[-2]
                 title = re.sub(r"-%28.*?%29", "", slug).replace("-", " ").strip()
-
             if len(title) <= 5:
                 continue
 
-            # Skip items that share no words with the keyword — these are
-            # featured/promoted items unrelated to the search
+            # Relevance filter: at least one keyword word must appear in title
             if kw_words and not any(w in title.lower() for w in kw_words):
                 continue
 
@@ -224,7 +239,7 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
                 break
 
         if not results:
-            print(f"Iron Planet: 0 results for '{keywords}'", file=sys.stderr)
+            print(f"Iron Planet: 0 results for '{keywords}' on {browse_url}", file=sys.stderr)
     except Exception as e:
         print(f"Iron Planet search error: {e}", file=sys.stderr)
     return results
