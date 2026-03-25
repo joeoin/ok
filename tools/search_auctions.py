@@ -136,17 +136,15 @@ def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
                 cr.raise_for_status()
                 csoup = BeautifulSoup(cr.text, "html.parser")
 
-                # Derive catalog path to find deeper links (lot pages)
+                # Lot URLs: /en-us/auction-catalogues/{auctioneer}/{catalogue-id}/{numeric-lot-id}/{title}
+                # The segment immediately after the catalogue-id must be numeric — this excludes
+                # terms-and-conditions, search-filter, register, description, etc.
                 cat_path = cat_url.replace("https://www.bidspotter.com", "")
+                lot_re = re.compile(r"^" + re.escape(cat_path) + r"/\d+/")
 
                 for a in csoup.find_all("a", href=True):
                     href = a["href"]
-                    is_lot = (
-                        # Lot is any path that starts with the catalog path + more segments
-                        (href.startswith(cat_path + "/") and "search-filter" not in href)
-                        # Or explicit /lots/ pattern (future-proof)
-                        or "/lots/" in href
-                    )
+                    is_lot = lot_re.match(href) or "/lots/" in href
                     if is_lot:
                         if not href.startswith("http"):
                             href = "https://www.bidspotter.com" + href
