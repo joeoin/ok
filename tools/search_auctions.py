@@ -198,14 +198,25 @@ def _ip_browse_url(keywords: str) -> str:
     return "https://www.ironplanet.com" + _IP_DEFAULT
 
 
+# Keywords that have no corresponding items on Iron Planet (not heavy/gov equipment)
+_IP_SKIP = {"laptop", "computer", "notebook", "phone", "tablet",
+             "furniture", "chair", "desk", "couch", "sofa",
+             "guitar", "piano", "violin", "drum", "instrument",
+             "treadmill", "dumbbell", "weights"}
+
+
 def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
     """Search Iron Planet via category browse (loads items in static HTML).
 
     Item URL format: /for-sale/{Category-Year-Brand-Description-State}/{itemId}
     """
-    results = []
-    kw_words = [w for w in re.split(r"\W+", keywords.lower()) if len(w) > 3]
+    # Skip keywords that have no equivalent on Iron Planet
+    kw_split = set(re.split(r"\W+", keywords.lower()))
+    if kw_split & _IP_SKIP:
+        return []
+
     browse_url = _ip_browse_url(keywords)
+    results = []
 
     try:
         r = requests.get(browse_url, headers=HEADERS, timeout=20)
@@ -228,10 +239,6 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
                 slug = href.split("?")[0].rsplit("/", 2)[-2]
                 title = re.sub(r"-%28.*?%29", "", slug).replace("-", " ").strip()
             if len(title) <= 5:
-                continue
-
-            # Relevance filter: at least one keyword word must appear in title
-            if kw_words and not any(w in title.lower() for w in kw_words):
                 continue
 
             results.append({"url": clean, "title": title, "site": "ironplanet"})
