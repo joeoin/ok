@@ -280,8 +280,12 @@ def get_ebay_resale_value(title: str) -> str:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto(url, wait_until="networkidle", timeout=20000)
-            page.wait_for_timeout(1500)
+            page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
+            page.goto(url, wait_until="load", timeout=30000)
+            try:
+                page.wait_for_selector(".s-item__price", timeout=10000)
+            except Exception:
+                pass
             prices = page.eval_on_selector_all(
                 ".s-item__price",
                 "els => els.map(e => e.innerText.trim())"
@@ -318,18 +322,26 @@ def main():
     p.add_argument("--category", default="")
     p.add_argument("--keywords", default="")
     p.add_argument("--max",      type=int, default=5)
+    p.add_argument("--all-categories", action="store_true", help="Search all known categories and return top deals")
     args = p.parse_args()
 
-    term = args.keywords or args.category
-    if not term:
-        print("Provide --keywords or --category", file=sys.stderr)
-        sys.exit(1)
+    if args.all_categories:
+        all_keywords = list(_PS_CAT.keys())
+        term = None
+    else:
+        term = args.keywords or args.category
+        if not term:
+            print("Provide --keywords or --category, or use --all-categories", file=sys.stderr)
+            sys.exit(1)
+        all_keywords = [term]
 
     # Fetch a larger pool to rank by profit potential
-    pool_size = args.max * 6
+    pool_size = max(args.max * 4, 20)
     candidates = []
-    candidates += search_publicsurplus(term, args.zip, args.radius, pool_size)
-    candidates += search_ironplanet(term, pool_size)
+    for kw in all_keywords:
+        candidates += search_publicsurplus(kw, args.zip, args.radius, pool_size // len(all_keywords) + 2)
+    if term:
+        candidates += search_ironplanet(term, pool_size)
 
     # Score each item by profit potential
     scored = []
