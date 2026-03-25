@@ -100,22 +100,31 @@ def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results:
                 page.goto(url, wait_until="networkidle", timeout=30000)
                 page.wait_for_timeout(2000)
 
-                # Grab all auction links with their text
+                # Grab each auction card: title, price, location, time left
                 items = page.eval_on_selector_all(
                     "a[href*='/auction/view']",
-                    """els => els.map(e => ({
-                        href: e.getAttribute('href'),
-                        text: (e.innerText || e.textContent || '').trim()
-                    }))"""
+                    """els => els.map(e => {
+                        const card = e.closest('.auction-item, .ps-card, .card, li, tr') || e.parentElement;
+                        const cardText = card ? card.innerText : '';
+                        const priceMatch = cardText.match(/\\$[\\d,]+(?:\\.\\d{2})?/);
+                        const lines = cardText.split('\\n').map(l => l.trim()).filter(Boolean);
+                        return {
+                            href: e.getAttribute('href'),
+                            text: (e.innerText || e.textContent || '').trim(),
+                            price: priceMatch ? priceMatch[0] : '',
+                            card_text: lines.slice(0, 6).join(' | ')
+                        };
+                    })"""
                 )
 
                 for item in items:
                     href = item.get("href", "")
                     title = item.get("text", "").strip()
+                    price = item.get("price", "")
+                    card_text = item.get("card_text", "")
                     if not href or "/auction/view" not in href:
                         continue
                     full_url = "https://www.publicsurplus.com" + href if not href.startswith("http") else href
-                    # deduplicate by auc ID
                     auc_id = re.search(r"auc=(\d+)", full_url)
                     key = auc_id.group(1) if auc_id else full_url
                     if key in seen:
@@ -123,7 +132,13 @@ def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results:
                     seen.add(key)
                     if len(title) < 4:
                         title = f"Auction {key}"
-                    results.append({"url": full_url, "title": title, "site": "publicsurplus"})
+                    results.append({
+                        "url": full_url,
+                        "title": title,
+                        "price": price,
+                        "details": card_text,
+                        "site": "publicsurplus",
+                    })
                     if len(results) >= max_results:
                         break
 
