@@ -107,7 +107,11 @@ def _ps_build_results(items, max_results, seen, location_label):
         if key in seen:
             continue
         seen.add(key)
-        if len(title) < 4:
+        # Extract real item name from details string "AZ | #ID - ITEM NAME | Price: ..."
+        name_match = re.search(r"#\d+ - (.+?) \|", details)
+        if name_match:
+            title = name_match.group(1).strip().title()
+        elif len(title) < 4:
             title = f"Auction {key}"
         results.append({
             "url": full_url,
