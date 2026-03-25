@@ -263,10 +263,6 @@ def main():
         sys.exit(1)
 
     results = []
-    results += search_publicsurplus(term, args.zip, args.radius, args.max)
-    time.sleep(0.5)
-    results += search_bidspotter(term, args.max)
-    time.sleep(0.5)
     results += search_ironplanet(term, args.max)
 
     print(json.dumps(results, indent=2))
