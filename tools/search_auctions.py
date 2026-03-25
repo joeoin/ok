@@ -330,15 +330,35 @@ def main():
         print("Provide --keywords or --category", file=sys.stderr)
         sys.exit(1)
 
-    results = []
-    results += search_publicsurplus(term, args.zip, args.radius, args.max)
-    results += search_ironplanet(term, args.max)
+    # Fetch a larger pool to rank by profit potential
+    pool_size = args.max * 6
+    candidates = []
+    candidates += search_publicsurplus(term, args.zip, args.radius, pool_size)
+    candidates += search_ironplanet(term, pool_size)
 
-    # Add eBay resale value to each result
-    for r in results:
-        r["ebay_resale_value"] = get_ebay_resale_value(r["title"])
+    # Score each item by profit potential
+    scored = []
+    for r in candidates:
+        ebay_str = get_ebay_resale_value(r["title"])
+        r["ebay_resale_value"] = ebay_str
 
-    print(json.dumps(results, indent=2))
+        # Parse current bid
+        bid_match = re.search(r"\$([\d,]+(?:\.\d{2})?)", r.get("current_bid", ""))
+        bid = float(bid_match.group(1).replace(",", "")) if bid_match else 0.0
+
+        # Parse eBay median
+        ebay_match = re.search(r"\$([\d,]+(?:\.\d{2})?)", ebay_str)
+        ebay_median = float(ebay_match.group(1).replace(",", "")) if ebay_match else 0.0
+
+        profit = ebay_median - bid
+        r["estimated_profit"] = f"${profit:,.0f}" if ebay_median > 0 else "unknown"
+        scored.append((profit, r))
+
+    # Sort by profit descending, return top N
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [r for _, r in scored[:args.max]]
+
+    print(json.dumps(top, indent=2))
 
 
 if __name__ == "__main__":
