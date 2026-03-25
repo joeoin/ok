@@ -168,7 +168,11 @@ def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
 
 
 def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
-    """Search Iron Planet via their JSP search endpoint."""
+    """Search Iron Planet via keyword search.
+
+    Item URL format discovered from live HTML:
+    /for-sale/{Category-Year-Brand-Description-State}/{itemId}?...
+    """
     results = []
     try:
         r = requests.get(
@@ -180,18 +184,19 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
+        # Item links match /for-sale/{slug}/{numeric-id}
+        item_re = re.compile(r"^/for-sale/[^/?#]+/\d+")
         seen = set()
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            # Item URLs: /item/{id} or /jsp/s/item.ips or similar
-            if re.search(r"/(item|itemId)[=/]\d+", href) or re.search(r"/item/\d+", href):
-                if not href.startswith("http"):
-                    href = "https://www.ironplanet.com" + href
-                if href not in seen:
-                    seen.add(href)
+            if item_re.match(href):
+                # Strip query string — keep clean canonical URL
+                clean = "https://www.ironplanet.com" + href.split("?")[0]
+                if clean not in seen:
+                    seen.add(clean)
                     title = a.get_text(strip=True)
                     if len(title) > 5:
-                        results.append({"url": href, "title": title, "site": "ironplanet"})
+                        results.append({"url": clean, "title": title, "site": "ironplanet"})
                         if len(results) >= max_results:
                             break
 
