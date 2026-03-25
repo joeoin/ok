@@ -9,15 +9,15 @@
   "min_profit": 100,
   "max_daily_posts": 5,
   "searches": [
-    {"keywords": "", "category": "Tools & Equipment"},
-    {"keywords": "", "category": "Electronics & Computers"},
-    {"keywords": "", "category": "Generators & Power Equipment"},
-    {"keywords": "", "category": "Furniture & Office Equipment"},
-    {"keywords": "", "category": "Medical & Lab Equipment"},
-    {"keywords": "", "category": "HVAC & Appliances"},
-    {"keywords": "", "category": "Sporting Goods & Recreation"},
-    {"keywords": "", "category": "Musical Instruments"},
-    {"keywords": "", "category": "Lawn & Garden Equipment"},
-    {"keywords": "", "category": "Janitorial & Cleaning Equipment"}
+    {"keywords": "tools", "category": "Tools & Equipment"},
+    {"keywords": "laptop", "category": "Electronics & Computers"},
+    {"keywords": "generator", "category": "Generators & Power Equipment"},
+    {"keywords": "furniture", "category": "Furniture & Office Equipment"},
+    {"keywords": "medical", "category": "Medical & Lab Equipment"},
+    {"keywords": "hvac", "category": "HVAC & Appliances"},
+    {"keywords": "treadmill", "category": "Sporting Goods & Recreation"},
+    {"keywords": "guitar", "category": "Musical Instruments"},
+    {"keywords": "mower", "category": "Lawn & Garden Equipment"},
+    {"keywords": "floor scrubber", "category": "Janitorial & Cleaning Equipment"}
   ]
 }
