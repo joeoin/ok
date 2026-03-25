@@ -268,47 +268,42 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
 # ── eBay resale value ──────────────────────────────────────────────────────────
 
 def get_ebay_resale_value(title: str) -> str:
-    """Scrape eBay sold listings to estimate resale value."""
+    """Scrape eBay sold listings using Playwright to get real resale prices."""
     words = [w for w in re.split(r"\W+", title) if len(w) > 2][:5]
     query = " ".join(words)
     if not query:
         return "unknown"
     try:
+        from playwright.sync_api import sync_playwright
         from urllib.parse import quote_plus
         url = f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}&LH_Complete=1&LH_Sold=1&_sop=13"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Cache-Control": "max-age=0",
-        }
-        r = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(r.text, "html.parser")
-        prices = []
-        # Try multiple selectors — eBay changes these
-        for sel in [".s-item__price", ".POSITIVE", "span[class*='price']"]:
-            for span in soup.select(sel):
-                text = span.get_text(strip=True)
-                m = re.search(r"\$([\d,]+(?:\.\d{2})?)", text)
-                if m:
-                    try:
-                        val = float(m.group(1).replace(",", ""))
-                        if 0.99 < val < 50000:
-                            prices.append(val)
-                    except ValueError:
-                        pass
-            if prices:
-                break
-        if not prices:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=20000)
+            page.wait_for_timeout(1500)
+            prices = page.eval_on_selector_all(
+                ".s-item__price",
+                "els => els.map(e => e.innerText.trim())"
+            )
+            browser.close()
+        parsed = []
+        for text in prices:
+            m = re.search(r"\$([\d,]+(?:\.\d{2})?)", text)
+            if m:
+                try:
+                    val = float(m.group(1).replace(",", ""))
+                    if 0.99 < val < 50000:
+                        parsed.append(val)
+                except ValueError:
+                    pass
+        if not parsed:
             return "no sold listings found"
-        prices.sort()
-        median = prices[len(prices) // 2]
-        low = prices[0]
-        high = prices[-1]
-        return f"${median:,.0f} median (${low:,.0f}–${high:,.0f} range, {len(prices)} sold)"
+        parsed.sort()
+        median = parsed[len(parsed) // 2]
+        low = parsed[0]
+        high = parsed[-1]
+        return f"${median:,.0f} median (${low:,.0f}–${high:,.0f} range, {len(parsed)} sold)"
     except Exception as e:
         return f"lookup failed: {e}"
 
