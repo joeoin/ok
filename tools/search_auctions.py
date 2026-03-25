@@ -123,42 +123,50 @@ def _ps_build_results(items, max_results, seen, location_label):
 
 
 def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
-    """Search PublicSurplus with Playwright. Tries local first, falls back to nationwide."""
+    """Browse PublicSurplus Arizona state category pages with Playwright, filter by keyword."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         print("Playwright not installed: pip install playwright && python -m playwright install chromium", file=sys.stderr)
         return []
 
-    from urllib.parse import quote
+    catids = _ps_catids_for_keyword(keywords)
+    if not catids:
+        print(f"PublicSurplus: no category mapping for '{keywords}'", file=sys.stderr)
+        return []
+
+    kw_words = [w.lower() for w in re.split(r"\W+", keywords) if len(w) > 2]
     seen = set()
+    results = []
 
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
 
-            # 1. Try local zip+radius search
-            local_url = (
-                "https://www.publicsurplus.com/sms/browse/search"
-                f"?posting=y&page=1&sortBy=timeLeft&keyWord={quote(keywords)}"
-                f"&catId=&endHours=-1&startHours=-1&lowerPrice=&higherPrice="
-                f"&milesLocation={radius}&zipCode={zip_code}&region=&search=Search"
-            )
-            items = _ps_scrape_url(page, local_url)
-            results = _ps_build_results(items, max_results, seen, f"within {radius}mi of {zip_code}")
+            for catid in catids:
+                if len(results) >= max_results:
+                    break
 
-            # 2. Nothing local — search nationwide
+                page = browser.new_page()
+                # Browse Arizona-specific category page
+                url = f"https://www.publicsurplus.com/sms/all,az/browse/cataucs?catid={catid}"
+                items = _ps_scrape_url(page, url)
+                page.close()
+
+                az_results = _ps_build_results(items, max_results - len(results), seen, "Arizona")
+                results.extend(az_results)
+
+            # If nothing in AZ, try nationwide for same categories
             if not results:
-                print(f"PublicSurplus: no local results, showing nationwide for '{keywords}'", file=sys.stderr)
-                national_url = (
-                    "https://www.publicsurplus.com/sms/browse/search"
-                    f"?posting=y&page=1&sortBy=timeLeft&keyWord={quote(keywords)}"
-                    "&catId=&endHours=-1&startHours=-1&lowerPrice=&higherPrice="
-                    "&milesLocation=&zipCode=&region=&search=Search"
-                )
-                items = _ps_scrape_url(page, national_url)
-                results = _ps_build_results(items, max_results, seen, "nationwide")
+                print(f"PublicSurplus: no AZ results, checking nationwide for '{keywords}'", file=sys.stderr)
+                for catid in catids:
+                    if len(results) >= max_results:
+                        break
+                    page = browser.new_page()
+                    url = f"https://www.publicsurplus.com/sms/browse/cataucs?catid={catid}"
+                    items = _ps_scrape_url(page, url)
+                    page.close()
+                    results.extend(_ps_build_results(items, max_results - len(results), seen, "nationwide"))
 
             browser.close()
 
