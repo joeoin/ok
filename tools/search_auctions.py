@@ -34,26 +34,16 @@ HEADERS = {
 }
 
 
-def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
-    """Search PublicSurplus using the correct /sms/browse/search endpoint."""
+def search_publicsurplus(keywords: str, state: str, max_results: int) -> list[dict]:
+    """Search PublicSurplus using state browse URL: /sms/all,{state}/browse/search"""
     results = []
     try:
         r = requests.get(
-            "https://www.publicsurplus.com/sms/browse/search",
+            f"https://www.publicsurplus.com/sms/all,{state.lower()}/browse/search",
             params={
-                "posting": "y",
-                "page": "1",
-                "sortBy": "timeLeft",
                 "keyWord": keywords,
-                "catId": "",
-                "endHours": "-1",
-                "startHours": "-1",
-                "lowerPrice": "",
-                "higherPrice": "",
-                "milesLocation": str(radius),
-                "zipCode": zip_code,
-                "region": "",
-                "search": "Search",
+                "sortBy": "timeLeft",
+                "page": "1",
             },
             headers=HEADERS,
             timeout=20,
@@ -61,22 +51,49 @@ def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results:
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
+        # Parse results table: div.baseDiv -> second table -> tr rows -> first td link
+        base = soup.find("div", class_="baseDiv")
+        tables = (base or soup).find_all("table")
+        rows = tables[1].find_all("tr") if len(tables) > 1 else []
+        if rows:
+            rows = rows[1:]  # skip header row
+
         seen = set()
-        for a in soup.find_all("a", href=True):
+        for row in rows:
+            tds = row.find_all("td")
+            if not tds:
+                continue
+            a = tds[0].find("a", href=True)
+            if not a:
+                continue
             href = a["href"]
-            if "/auction/view" in href:
-                if not href.startswith("http"):
-                    href = "https://www.publicsurplus.com" + href
-                if href not in seen:
-                    seen.add(href)
-                    title = a.get_text(strip=True)
-                    if len(title) > 5:
-                        results.append({"url": href, "title": title, "site": "publicsurplus"})
-                        if len(results) >= max_results:
-                            break
+            if not href.startswith("http"):
+                href = "https://www.publicsurplus.com" + href
+            if href not in seen and "/auction/view" in href:
+                seen.add(href)
+                title = a.get_text(strip=True)
+                if len(title) > 5:
+                    results.append({"url": href, "title": title, "site": "publicsurplus"})
+                    if len(results) >= max_results:
+                        break
+
+        # Fallback: scan all links if table parse found nothing
+        if not results:
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if "/auction/view" in href:
+                    if not href.startswith("http"):
+                        href = "https://www.publicsurplus.com" + href
+                    if href not in seen:
+                        seen.add(href)
+                        title = a.get_text(strip=True)
+                        if len(title) > 5:
+                            results.append({"url": href, "title": title, "site": "publicsurplus"})
+                            if len(results) >= max_results:
+                                break
 
         if not results:
-            print(f"PublicSurplus: 0 results for '{keywords}' near {zip_code}", file=sys.stderr)
+            print(f"PublicSurplus: 0 results for '{keywords}' in {state}", file=sys.stderr)
     except Exception as e:
         print(f"PublicSurplus search error: {e}", file=sys.stderr)
     return results
@@ -199,7 +216,7 @@ def main():
     zip_code = args.zip or "00000"
 
     results = []
-    results += search_publicsurplus(term, zip_code, args.radius, args.max)
+    results += search_publicsurplus(term, args.state, args.max)
     time.sleep(0.5)
     results += search_bidspotter(term, args.max)
     time.sleep(0.5)

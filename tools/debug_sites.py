@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Debug script — shows exactly what each auction site returns.
+"""Debug script — shows filtered hrefs and HTML for each auction site.
 
 Run:
     python tools/debug_sites.py
-
-Prints: HTTP status, final URL (after redirects), first 100 unique hrefs,
-and first 2000 chars of HTML body for each site.
 """
 import re
-import sys
 import requests
 from bs4 import BeautifulSoup
 
@@ -23,7 +19,7 @@ HEADERS = {
 }
 
 
-def dump(label, url, params=None):
+def dump(label, url, params=None, href_filter=None):
     print(f"\n{'='*60}")
     print(f"SITE: {label}")
     print(f"URL:  {url}")
@@ -33,61 +29,70 @@ def dump(label, url, params=None):
         r = requests.get(url, params=params, headers=HEADERS, timeout=20)
         print(f"STATUS: {r.status_code}")
         print(f"FINAL URL: {r.url}")
-        print(f"CONTENT-TYPE: {r.headers.get('Content-Type','?')}")
 
         soup = BeautifulSoup(r.text, "html.parser")
+        all_hrefs = list(dict.fromkeys(
+            a["href"] for a in soup.find_all("a", href=True)
+        ))
+        print(f"TOTAL HREFS: {len(all_hrefs)}")
 
-        # All unique hrefs
-        hrefs = []
-        seen = set()
-        for a in soup.find_all("a", href=True):
-            h = a["href"]
-            if h not in seen:
-                seen.add(h)
-                hrefs.append(h)
-        print(f"\nALL HREFS ({len(hrefs)} unique):")
-        for h in hrefs[:100]:
-            print(f"  {h}")
+        if href_filter:
+            matched = [h for h in all_hrefs if href_filter(h)]
+            print(f"FILTERED HREFS ({len(matched)} matched):")
+            for h in matched[:50]:
+                print(f"  {h}")
+        else:
+            print(f"ALL HREFS (first 50):")
+            for h in all_hrefs[:50]:
+                print(f"  {h}")
 
-        # Raw HTML snippet
-        print(f"\nHTML BODY (first 3000 chars):")
-        print(r.text[:3000])
+        print(f"\nHTML BODY (first 2000 chars):")
+        print(r.text[:2000])
 
     except Exception as e:
         print(f"ERROR: {e}")
 
 
-# ── PublicSurplus ──────────────────────────────────────────────────────────────
+# ── PublicSurplus — use state browse URL ──────────────────────────────────────
+# Correct URL format discovered from their own nav: /sms/all,az/browse/search
 dump(
-    "PublicSurplus",
-    "https://www.publicsurplus.com/sms/browse/search",
-    params={
-        "posting": "y",
-        "page": "1",
-        "sortBy": "timeLeft",
-        "keyWord": "generator",
-        "catId": "",
-        "endHours": "-1",
-        "startHours": "-1",
-        "lowerPrice": "",
-        "higherPrice": "",
-        "milesLocation": "100",
-        "zipCode": "85001",
-        "region": "",
-        "search": "Search",
-    },
+    "PublicSurplus (state browse, no keyword filter)",
+    "https://www.publicsurplus.com/sms/all,az/browse/search",
+    href_filter=lambda h: "auction" in h.lower(),
 )
 
-# ── BidSpotter search page ─────────────────────────────────────────────────────
 dump(
-    "BidSpotter (search)",
+    "PublicSurplus (state browse + keyword)",
+    "https://www.publicsurplus.com/sms/all,az/browse/search",
+    params={"keyWord": "generator", "sortBy": "timeLeft", "page": "1"},
+    href_filter=lambda h: "auction" in h.lower(),
+)
+
+# ── BidSpotter — show only catalog/lot hrefs ──────────────────────────────────
+dump(
+    "BidSpotter (keyword search) — catalog+lot hrefs only",
     "https://www.bidspotter.com/en-us/auction-catalogues",
     params={"q": "generator", "pageNo": 1},
+    href_filter=lambda h: "auction-catalogues" in h and h.count("/") >= 5,
 )
 
-# ── Iron Planet ────────────────────────────────────────────────────────────────
 dump(
-    "Iron Planet",
+    "BidSpotter (category page: generators) — lot hrefs only",
+    "https://www.bidspotter.com/en-us/for-sale/industrial-and-commercial/generators",
+    href_filter=lambda h: "/lots/" in h or ("/en-us/" in h and h.count("/") >= 5),
+)
+
+# ── Iron Planet — show item-like hrefs ────────────────────────────────────────
+dump(
+    "Iron Planet (keyword search) — item hrefs only",
     "https://www.ironplanet.com/jsp/s/search.ips",
     params={"kw": "generator"},
+    href_filter=lambda h: re.search(r"\d{4,}", h) and "ironplanet" not in h,
+)
+
+dump(
+    "Iron Planet (category: generators) — item hrefs only",
+    "https://www.ironplanet.com/Generators+and+Power+Equipment",
+    params={"ct": "1"},
+    href_filter=lambda h: re.search(r"\d{4,}", h) and "ironplanet" not in h,
 )
