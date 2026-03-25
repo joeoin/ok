@@ -2,11 +2,11 @@
 """Search PublicSurplus, BidSpotter, and Iron Planet for auction listings.
 
 Usage:
-    python tools/search_auctions.py --state AZ --keywords "generator" --max 3
-    python tools/search_auctions.py --state AZ --category "Tools & Equipment" --max 3
+    python tools/search_auctions.py --state AZ --zip 85001 --radius 100 --keywords "generator" --max 3
+    python tools/search_auctions.py --state AZ --zip 85001 --radius 100 --category "Tools & Equipment" --max 3
 
 Output: JSON array of {url, title, site} to stdout.
-Errors go to stderr; script exits 0 with partial results if one site fails.
+Errors go to stderr; exits 0 with partial results if one site fails.
 """
 
 import argparse
@@ -36,33 +36,10 @@ HEADERS = {
 
 # ── PublicSurplus ──────────────────────────────────────────────────────────────
 
-def _ps_extract(soup, max_results):
-    seen = set()
-    results = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/auction/view" in href or "auctionId=" in href:
-            if not href.startswith("http"):
-                href = "https://www.publicsurplus.com" + href
-            if href not in seen:
-                seen.add(href)
-                title = a.get_text(strip=True)
-                if len(title) > 5:
-                    results.append({"url": href, "title": title, "site": "publicsurplus"})
-                    if len(results) >= max_results:
-                        break
-    return results
-
-
 def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
-    """Search PublicSurplus.
-
-    Primary: /sms/browse/search with zip+radius (original working endpoint).
-    Fallback: /sms/all,{state}/browse/search state browse with keyword filter.
-    """
+    """Search PublicSurplus via zip+radius keyword search (original working endpoint)."""
     results = []
     try:
-        # Primary search — zip/radius filtered
         r = requests.get(
             "https://www.publicsurplus.com/sms/browse/search",
             params={
@@ -77,9 +54,22 @@ def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results:
             timeout=20,
         )
         r.raise_for_status()
-        results = _ps_extract(BeautifulSoup(r.text, "html.parser"), max_results)
+        soup = BeautifulSoup(r.text, "html.parser")
+        seen = set()
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "/auction/view" in href or "auctionId=" in href:
+                if not href.startswith("http"):
+                    href = "https://www.publicsurplus.com" + href
+                if href not in seen:
+                    seen.add(href)
+                    title = a.get_text(strip=True)
+                    if len(title) > 5:
+                        results.append({"url": href, "title": title, "site": "publicsurplus"})
+                        if len(results) >= max_results:
+                            break
     except Exception as e:
-        print(f"PublicSurplus primary search error: {e}", file=sys.stderr)
+        print(f"PublicSurplus search error: {e}", file=sys.stderr)
 
     if not results:
         print(f"PublicSurplus: 0 results for '{keywords}' near {zip_code}", file=sys.stderr)
@@ -89,15 +79,7 @@ def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results:
 # ── BidSpotter ─────────────────────────────────────────────────────────────────
 
 def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
-    """Search BidSpotter in two steps.
-
-    Step 1: keyword search returns catalog-level pages.
-    Step 2: fetch each catalog page and extract individual lot links.
-
-    Lot URL format (from live observation):
-      /en-us/auction-catalogues/{auctioneer}/catalogue-id-{id}/{lotNum}/{title}
-    Not /lots/ — just additional path segments after the catalog ID.
-    """
+    """Search BidSpotter: get catalog list, then scrape lot links from each catalog."""
     results = []
     try:
         r = requests.get(
@@ -109,17 +91,14 @@ def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # Catalog links: exactly /en-us/auction-catalogues/{auctioneer}/{catalogue-id}
-        # (no further path segments, no query string)
         catalog_re = re.compile(r"^/en-us/auction-catalogues/[^/?#]+/[^/?#]+$")
         catalog_links = []
         seen_catalogs = set()
         for a in soup.find_all("a", href=True):
             href = a["href"]
             if catalog_re.match(href) and href not in seen_catalogs:
-                full = "https://www.bidspotter.com" + href
                 seen_catalogs.add(href)
-                catalog_links.append(full)
+                catalog_links.append("https://www.bidspotter.com" + href)
                 if len(catalog_links) >= 3:
                     break
 
@@ -127,7 +106,6 @@ def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
             print(f"BidSpotter: no catalogs found for '{keywords}'", file=sys.stderr)
             return results
 
-        # Step 2: visit each catalog and extract lot links
         seen_lots = set()
         for cat_url in catalog_links:
             if len(results) >= max_results:
@@ -137,35 +115,24 @@ def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
                 cr = requests.get(cat_url, headers=HEADERS, timeout=20)
                 cr.raise_for_status()
                 csoup = BeautifulSoup(cr.text, "html.parser")
-
-                # Lot URLs: /en-us/auction-catalogues/{auctioneer}/{catalogue-id}/{numeric-lot-id}/{title}
-                # The segment immediately after the catalogue-id must be numeric — this excludes
-                # terms-and-conditions, search-filter, register, description, etc.
                 cat_path = cat_url.replace("https://www.bidspotter.com", "")
                 lot_re = re.compile(r"^" + re.escape(cat_path) + r"/\d+/")
-
                 for a in csoup.find_all("a", href=True):
                     href = a["href"]
-                    is_lot = lot_re.match(href) or "/lots/" in href
-                    if is_lot:
+                    if (lot_re.match(href) or "/lots/" in href) and href not in seen_lots:
                         if not href.startswith("http"):
                             href = "https://www.bidspotter.com" + href
-                        if href not in seen_lots:
-                            seen_lots.add(href)
-                            title = a.get_text(strip=True)
-                            if len(title) > 5:
-                                results.append({"url": href, "title": title, "site": "bidspotter"})
-                                if len(results) >= max_results:
-                                    break
+                        seen_lots.add(href)
+                        title = a.get_text(strip=True)
+                        if len(title) > 5:
+                            results.append({"url": href, "title": title, "site": "bidspotter"})
+                            if len(results) >= max_results:
+                                break
             except Exception as e:
-                print(f"BidSpotter catalog fetch error ({cat_url}): {e}", file=sys.stderr)
+                print(f"BidSpotter catalog error ({cat_url}): {e}", file=sys.stderr)
 
         if not results:
-            print(
-                f"BidSpotter: 0 lots found for '{keywords}' "
-                f"(catalog pages may be JavaScript-rendered)",
-                file=sys.stderr,
-            )
+            print(f"BidSpotter: 0 lots found for '{keywords}'", file=sys.stderr)
     except Exception as e:
         print(f"BidSpotter search error: {e}", file=sys.stderr)
     return results
@@ -173,83 +140,109 @@ def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
 
 # ── Iron Planet ────────────────────────────────────────────────────────────────
 
-# Iron Planet keyword search loads results via JavaScript — useless for scraping.
-# Category browse pages load items in static HTML (confirmed from live debug).
-# Map keyword fragments → category browse path; default to Government Surplus
-# which covers tools, medical, HVAC, electrical, shop/consumer items.
-_IP_CATEGORIES = [
-    (["generator", "power equipment", "genset"],           "/Generators+and+Power+Equipment"),
-    (["truck", "trailer", "pickup"],                        "/Trucks+%26+Trailers"),
-    (["forklift", "warehouse", "pallet jack"],              "/Forklifts+and+Warehouse+Equipment"),
-    (["mower", "tractor", "farm", "lawn", "garden"],        "/Agriculture"),
-    (["crane"],                                              "/Cranes"),
-    (["excavator", "dozer", "loader", "skid steer"],        "/Construction"),
-    (["mining"],                                             "/Mining"),
-    (["oil", "gas", "pump"],                                "/Oil+%26+Gas"),
+# Category browse URLs whose pages load items in static HTML.
+# Any keyword not in this map falls back to keyword search.
+_IP_CATEGORY_MAP = [
+    (["generator", "power equipment", "genset"],         "/Generators+and+Power+Equipment"),
+    (["truck", "trailer", "pickup"],                      "/Trucks+%26+Trailers"),
+    (["forklift", "warehouse", "pallet"],                 "/Forklifts+and+Warehouse+Equipment"),
+    (["mower", "tractor", "farm", "lawn", "garden"],      "/Agriculture"),
+    (["crane"],                                            "/Cranes"),
+    (["excavator", "dozer", "loader", "skid steer"],      "/Construction"),
 ]
-_IP_DEFAULT = "/Government+Surplus"  # tools, medical, hvac, shop items
 
-
-def _ip_browse_url(keywords: str) -> str:
-    kw = keywords.lower()
-    for terms, path in _IP_CATEGORIES:
-        if any(t in kw for t in terms):
-            return "https://www.ironplanet.com" + path
-    return "https://www.ironplanet.com" + _IP_DEFAULT
-
-
-# Keywords that have no corresponding items on Iron Planet (not heavy/gov equipment)
+# Keywords that don't exist on Iron Planet — skip entirely
 _IP_SKIP = {"laptop", "computer", "notebook", "phone", "tablet",
              "furniture", "chair", "desk", "couch", "sofa",
-             "guitar", "piano", "violin", "drum", "instrument",
+             "guitar", "piano", "violin", "drum",
              "treadmill", "dumbbell", "weights"}
+
+_ITEM_RE = re.compile(r"^/for-sale/[^/?#]+/\d+")
+
+
+def _ip_parse_items(soup, max_results, filter_words=None):
+    results = []
+    seen = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if not _ITEM_RE.match(href):
+            continue
+        clean = "https://www.ironplanet.com" + href.split("?")[0]
+        if clean in seen:
+            continue
+        seen.add(clean)
+
+        title = a.get_text(strip=True)
+        if len(title) < 6:
+            slug = href.split("?")[0].rsplit("/", 2)[-2]
+            title = re.sub(r"-?%28.*?%29-?", " ", slug).replace("-", " ").strip()
+        if len(title) <= 5:
+            continue
+
+        if filter_words and not any(w in title.lower() for w in filter_words):
+            continue
+
+        results.append({"url": clean, "title": title, "site": "ironplanet"})
+        if len(results) >= max_results:
+            break
+    return results
 
 
 def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
-    """Search Iron Planet via category browse (loads items in static HTML).
+    """Search Iron Planet.
 
-    Item URL format: /for-sale/{Category-Year-Brand-Description-State}/{itemId}
+    Strategy:
+    1. If keyword maps to a known category, use that category browse page
+       (these load items in static HTML — confirmed from live debug).
+    2. Otherwise fall back to keyword search on search.ips with a relevance
+       filter to drop the 2 always-present featured Arizona items.
     """
-    # Skip keywords that have no equivalent on Iron Planet
     kw_split = set(re.split(r"\W+", keywords.lower()))
     if kw_split & _IP_SKIP:
-        return []
+        return []  # Iron Planet doesn't carry these
 
-    browse_url = _ip_browse_url(keywords)
-    results = []
+    kw = keywords.lower()
+    kw_words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
 
+    # Try specific category browse first
+    category_path = None
+    for terms, path in _IP_CATEGORY_MAP:
+        if any(t in kw for t in terms):
+            category_path = path
+            break
+
+    if category_path:
+        url = "https://www.ironplanet.com" + category_path
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            r.raise_for_status()
+            results = _ip_parse_items(BeautifulSoup(r.text, "html.parser"), max_results)
+            if results:
+                return results
+        except Exception as e:
+            print(f"Iron Planet category error: {e}", file=sys.stderr)
+
+    # Fallback: keyword search with relevance filter
     try:
-        r = requests.get(browse_url, headers=HEADERS, timeout=20)
+        r = requests.get(
+            "https://www.ironplanet.com/jsp/s/search.ips",
+            params={"kw": keywords},
+            headers=HEADERS,
+            timeout=20,
+        )
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        item_re = re.compile(r"^/for-sale/[^/?#]+/\d+")
-        seen = set()
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if not item_re.match(href):
-                continue
-            clean = "https://www.ironplanet.com" + href.split("?")[0]
-            if clean in seen:
-                continue
-            seen.add(clean)
-
-            title = a.get_text(strip=True)
-            if len(title) < 6:
-                slug = href.split("?")[0].rsplit("/", 2)[-2]
-                title = re.sub(r"-%28.*?%29", "", slug).replace("-", " ").strip()
-            if len(title) <= 5:
-                continue
-
-            results.append({"url": clean, "title": title, "site": "ironplanet"})
-            if len(results) >= max_results:
-                break
-
-        if not results:
-            print(f"Iron Planet: 0 results for '{keywords}' on {browse_url}", file=sys.stderr)
+        results = _ip_parse_items(
+            BeautifulSoup(r.text, "html.parser"),
+            max_results,
+            filter_words=kw_words,
+        )
+        if results:
+            return results
     except Exception as e:
         print(f"Iron Planet search error: {e}", file=sys.stderr)
-    return results
+
+    print(f"Iron Planet: 0 results for '{keywords}'", file=sys.stderr)
+    return []
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -257,7 +250,7 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--state", required=True, help="Two-letter state code, e.g. AZ")
-    p.add_argument("--zip", default="85001", help="ZIP code for PublicSurplus location filter")
+    p.add_argument("--zip", default="85001", help="ZIP code for PublicSurplus")
     p.add_argument("--radius", type=int, default=100, help="Search radius in miles")
     p.add_argument("--category", default="", help="Item category")
     p.add_argument("--keywords", default="", help="Search keywords (overrides --category)")
