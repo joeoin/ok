@@ -7,7 +7,7 @@ potential on Facebook Marketplace.
 ## Sites
 - **PublicSurplus** (publicsurplus.com) — government surplus, HTTP + BeautifulSoup
 - **BidSpotter** (bidspotter.com) — multi-auctioneer platform, HTTP + BeautifulSoup
-- **Iron Planet** (ironplanet.com) — equipment auctions, JSON API with HTML fallback
+- **Iron Planet** (ironplanet.com) — equipment auctions, JSP search endpoint
 
 ## Setup — Read config before starting
 
@@ -34,7 +34,7 @@ Collect all `.url` values from `found_items.json` — these are already-found it
 For **each entry** in `searches`, run **exactly one** command:
 
 ```
-python tools/search_auctions.py --state <state> --category "<category>" [--keywords "<keywords>"] --max <max_listings_per_search>
+python tools/search_auctions.py --state <state> --zip <your_zip> --radius <radius_miles> --category "<category>" [--keywords "<keywords>"] --max <max_listings_per_search>
 ```
 
 Collect all returned URLs across all search entries.

@@ -2,8 +2,8 @@
 """Search PublicSurplus, BidSpotter, and Iron Planet for auction listings.
 
 Usage:
-    python tools/search_auctions.py --state AZ --category "Tools & Equipment" --max 3
-    python tools/search_auctions.py --state AZ --keywords "generator" --max 3
+    python tools/search_auctions.py --state AZ --zip 85001 --radius 100 --category "Tools & Equipment" --max 3
+    python tools/search_auctions.py --state AZ --zip 85001 --radius 100 --keywords "generator" --max 3
 
 Output: JSON array of {url, title, site} to stdout.
 Errors go to stderr; script exits 0 with partial results if one site fails.
@@ -30,20 +30,30 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
 
-def search_publicsurplus(state: str, keywords: str, max_results: int) -> list[dict]:
+def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
+    """Search PublicSurplus using the correct /sms/browse/search endpoint."""
     results = []
     try:
         r = requests.get(
-            "https://www.publicsurplus.com/sms/browse/home",
+            "https://www.publicsurplus.com/sms/browse/search",
             params={
-                "ac": "1",
-                "fn": "search",
-                "searchstate": state,
-                "searchterm": keywords,
-                "searchdist": "500",
+                "posting": "y",
+                "page": "1",
+                "sortBy": "timeLeft",
+                "keyWord": keywords,
+                "catId": "",
+                "endHours": "-1",
+                "startHours": "-1",
+                "lowerPrice": "",
+                "higherPrice": "",
+                "milesLocation": str(radius),
+                "zipCode": zip_code,
+                "region": "",
+                "search": "Search",
             },
             headers=HEADERS,
             timeout=20,
@@ -64,17 +74,19 @@ def search_publicsurplus(state: str, keywords: str, max_results: int) -> list[di
                         results.append({"url": href, "title": title, "site": "publicsurplus"})
                         if len(results) >= max_results:
                             break
+
         if not results:
-            print(f"PublicSurplus: 0 results for '{keywords}' in {state}", file=sys.stderr)
+            print(f"PublicSurplus: 0 results for '{keywords}' near {zip_code}", file=sys.stderr)
     except Exception as e:
         print(f"PublicSurplus search error: {e}", file=sys.stderr)
     return results
 
 
 def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
-    """Search BidSpotter for individual auction lots."""
+    """Search BidSpotter: step 1 finds catalogs, step 2 extracts lots from each catalog."""
     results = []
     try:
+        # Step 1: search returns catalog-level pages, not individual lots
         r = requests.get(
             "https://www.bidspotter.com/en-us/auction-catalogues",
             params={"q": keywords, "pageNo": 1},
@@ -84,68 +96,67 @@ def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        seen = set()
-        # BidSpotter lot URLs contain /lots/ in the path
+        # Collect catalog page links (e.g. /en-us/auction-catalogues/auctioneer/catalog-id)
+        catalog_links = []
+        seen_catalogs = set()
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            if "/lots/" in href:
+            # Catalog links: /en-us/auction-catalogues/{slug}/{id} but NOT /lots/
+            if (
+                re.search(r"/en-us/auction-catalogues/[^/]+/[^/]+$", href)
+                and "/lots" not in href
+                and href not in seen_catalogs
+            ):
                 if not href.startswith("http"):
                     href = "https://www.bidspotter.com" + href
-                if href not in seen:
-                    seen.add(href)
-                    title = a.get_text(strip=True)
-                    if len(title) > 5:
-                        results.append({"url": href, "title": title, "site": "bidspotter"})
-                        if len(results) >= max_results:
-                            break
+                seen_catalogs.add(href)
+                catalog_links.append(href)
+                if len(catalog_links) >= 3:
+                    break
+
+        if not catalog_links:
+            print(f"BidSpotter: no catalogs found for '{keywords}'", file=sys.stderr)
+            return results
+
+        # Step 2: visit each catalog page and extract individual lot links
+        seen_lots = set()
+        for cat_url in catalog_links:
+            if len(results) >= max_results:
+                break
+            try:
+                time.sleep(0.5)
+                cr = requests.get(cat_url, headers=HEADERS, timeout=20)
+                cr.raise_for_status()
+                csoup = BeautifulSoup(cr.text, "html.parser")
+                for a in csoup.find_all("a", href=True):
+                    href = a["href"]
+                    if "/lots/" in href:
+                        if not href.startswith("http"):
+                            href = "https://www.bidspotter.com" + href
+                        if href not in seen_lots:
+                            seen_lots.add(href)
+                            title = a.get_text(strip=True)
+                            if len(title) > 5:
+                                results.append({"url": href, "title": title, "site": "bidspotter"})
+                                if len(results) >= max_results:
+                                    break
+            except Exception as e:
+                print(f"BidSpotter catalog fetch error ({cat_url}): {e}", file=sys.stderr)
 
         if not results:
-            print(f"BidSpotter: 0 results for '{keywords}'", file=sys.stderr)
+            print(f"BidSpotter: 0 lots found for '{keywords}'", file=sys.stderr)
     except Exception as e:
         print(f"BidSpotter search error: {e}", file=sys.stderr)
     return results
 
 
-def search_ironplanet_api(keywords: str, state: str, max_results: int) -> list[dict]:
-    """Try Iron Planet JSON search API (no browser needed)."""
+def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
+    """Search Iron Planet via their JSP search endpoint."""
     results = []
     try:
         r = requests.get(
-            "https://www.ironplanet.com/rest/items",
-            params={
-                "q": keywords,
-                "state": state,
-                "pageSize": max_results,
-                "status": "UPCOMING,ACTIVE",
-            },
-            headers={**HEADERS, "Accept": "application/json"},
-            timeout=15,
-        )
-        ct = r.headers.get("Content-Type", "")
-        if r.status_code == 200 and "json" in ct:
-            data = r.json()
-            items = data.get("items") or data.get("results") or data.get("data") or []
-            for item in items[:max_results]:
-                item_id = item.get("id") or item.get("itemId") or item.get("inventoryId", "")
-                title = item.get("title") or item.get("name") or item.get("description", "")
-                if item_id and title:
-                    url = f"https://www.ironplanet.com/item/{item_id}"
-                    results.append({"url": url, "title": title.strip(), "site": "ironplanet"})
-            if results:
-                return results
-        print(f"Iron Planet API: status {r.status_code}, content-type '{ct}' — trying HTML", file=sys.stderr)
-    except Exception as e:
-        print(f"Iron Planet API error: {e} — trying HTML", file=sys.stderr)
-    return results
-
-
-def search_ironplanet_html(keywords: str, state: str, max_results: int) -> list[dict]:
-    """Fallback: scrape Iron Planet search results page."""
-    results = []
-    try:
-        r = requests.get(
-            "https://www.ironplanet.com/results",
-            params={"q": keywords, "state": state},
+            "https://www.ironplanet.com/jsp/s/search.ips",
+            params={"kw": keywords},
             headers=HEADERS,
             timeout=20,
         )
@@ -155,7 +166,8 @@ def search_ironplanet_html(keywords: str, state: str, max_results: int) -> list[
         seen = set()
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            if re.search(r"/item/\d+", href):
+            # Item URLs: /item/{id} or /jsp/s/item.ips or similar
+            if re.search(r"/(item|itemId)[=/]\d+", href) or re.search(r"/item/\d+", href):
                 if not href.startswith("http"):
                     href = "https://www.ironplanet.com" + href
                 if href not in seen:
@@ -165,37 +177,33 @@ def search_ironplanet_html(keywords: str, state: str, max_results: int) -> list[
                         results.append({"url": href, "title": title, "site": "ironplanet"})
                         if len(results) >= max_results:
                             break
+
+        if not results:
+            print(f"Iron Planet: 0 results for '{keywords}'", file=sys.stderr)
     except Exception as e:
-        print(f"Iron Planet HTML error: {e}", file=sys.stderr)
-    return results
-
-
-def search_ironplanet(keywords: str, state: str, max_results: int) -> list[dict]:
-    """Search Iron Planet: tries JSON API first, falls back to HTML."""
-    results = search_ironplanet_api(keywords, state, max_results)
-    if not results:
-        results = search_ironplanet_html(keywords, state, max_results)
-    if not results:
-        print(f"Iron Planet: 0 results for '{keywords}' in {state}", file=sys.stderr)
+        print(f"Iron Planet search error: {e}", file=sys.stderr)
     return results
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--state", required=True, help="Two-letter state code, e.g. AZ")
+    p.add_argument("--zip", default="", help="ZIP code for PublicSurplus location filter")
+    p.add_argument("--radius", type=int, default=100, help="Search radius in miles (for PublicSurplus)")
     p.add_argument("--category", default="", help="Item category")
     p.add_argument("--keywords", default="", help="Search keywords (overrides category if both given)")
     p.add_argument("--max", type=int, default=3, help="Max results per site")
     args = p.parse_args()
 
     term = args.keywords or args.category
+    zip_code = args.zip or "00000"
 
     results = []
-    results += search_publicsurplus(args.state, term, args.max)
+    results += search_publicsurplus(term, zip_code, args.radius, args.max)
     time.sleep(0.5)
     results += search_bidspotter(term, args.max)
     time.sleep(0.5)
-    results += search_ironplanet(term, args.state, args.max)
+    results += search_ironplanet(term, args.max)
 
     print(json.dumps(results))
 

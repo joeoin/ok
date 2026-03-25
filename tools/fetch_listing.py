@@ -146,37 +146,11 @@ def parse_bidspotter(soup: BeautifulSoup, url: str) -> dict:
 
 # ── Iron Planet ───────────────────────────────────────────────────────────────
 
-def fetch_ironplanet_api(url: str) -> dict | None:
-    """Try Iron Planet item JSON API endpoint (no browser needed)."""
-    m = re.search(r"/item/(\d+)", url)
-    if not m:
-        return None
-    item_id = m.group(1)
-    try:
-        r = requests.get(
-            f"https://www.ironplanet.com/rest/items/{item_id}",
-            headers={**HEADERS, "Accept": "application/json"},
-            timeout=15,
-        )
-        ct = r.headers.get("Content-Type", "")
-        if r.status_code == 200 and "json" in ct:
-            item = r.json()
-            title = item.get("title") or item.get("name") or item.get("description", "")
-            if title:
-                return {
-                    "url": url,
-                    "site": "ironplanet",
-                    "title": title,
-                    "lot": str(item_id),
-                    "current_bid": float(item.get("currentBid") or item.get("price") or item.get("currentPrice") or 0),
-                    "end_date": (item.get("closeDate") or item.get("endDate") or item.get("saleDate") or "")[:10],
-                    "location": item.get("location") or item.get("city") or item.get("region") or "",
-                    "photos": item.get("photos") or item.get("images") or [],
-                    "description": item.get("description") or item.get("longDescription") or "",
-                }
-    except Exception as e:
-        print(f"Iron Planet item API failed for {url}: {e}", file=sys.stderr)
-    return None
+def _ironplanet_lot_id(url: str) -> str:
+    """Extract item/lot ID from various Iron Planet URL formats."""
+    # /item/12345 or itemId=12345 or item.ips?itemId=12345
+    m = re.search(r"/item/(\d+)", url) or re.search(r"itemId=(\d+)", url)
+    return m.group(1) if m else ""
 
 
 def parse_ironplanet(soup: BeautifulSoup, url: str) -> dict:
@@ -185,8 +159,7 @@ def parse_ironplanet(soup: BeautifulSoup, url: str) -> dict:
     h1 = soup.find("h1") or soup.find("h2")
     result["title"] = h1.get_text(strip=True) if h1 else ""
 
-    item_m = re.search(r"/item/(\d+)", url)
-    result["lot"] = item_m.group(1) if item_m else ""
+    result["lot"] = _ironplanet_lot_id(url)
 
     result["current_bid"] = 0.0
     for label in soup.find_all(string=re.compile(r"Current Bid|Winning Bid|Reserve Price|Buy Now|Starting Bid", re.I)):
@@ -237,11 +210,6 @@ def parse_ironplanet(soup: BeautifulSoup, url: str) -> dict:
 
 def fetch(url: str) -> dict:
     if "ironplanet.com" in url:
-        # Try JSON API first (no browser needed)
-        api_result = fetch_ironplanet_api(url)
-        if api_result and api_result.get("title"):
-            return api_result
-        # Fall back to HTML
         r = requests.get(url, headers=HEADERS, timeout=20)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
