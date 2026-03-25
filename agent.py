@@ -207,7 +207,7 @@ async def main() -> None:
     min_profit = config.get("min_profit", 100)
     max_daily_posts = config.get("max_daily_posts", 5)
 
-    print("GovDeals Arbitrage Agent")
+    print("Surplus Auction Arbitrage Agent")
     print("=" * 60)
     print(f"Location    : {config.get('your_city_state')}  (ZIP {config.get('your_zip')})  within {radius} miles")
     print(f"Max bid     : ${max_bid}")
