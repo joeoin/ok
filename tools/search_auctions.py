@@ -71,8 +71,59 @@ def _ps_catids_for_keyword(keywords: str) -> list[int]:
     return []
 
 
+def _ps_scrape_url(page, url) -> list[dict]:
+    """Load a PublicSurplus search URL and extract auction cards."""
+    page.goto(url, wait_until="networkidle", timeout=30000)
+    page.wait_for_timeout(2000)
+    return page.eval_on_selector_all(
+        "a[href*='/auction/view']",
+        """els => els.map(e => {
+            const card = e.closest('.auction-item, .ps-card, .card, li, tr') || e.parentElement;
+            const cardText = card ? card.innerText : '';
+            const priceMatch = cardText.match(/\\$[\\d,]+(?:\\.\\d{2})?/);
+            const lines = cardText.split('\\n').map(l => l.trim()).filter(Boolean);
+            return {
+                href: e.getAttribute('href'),
+                text: (e.innerText || e.textContent || '').trim(),
+                price: priceMatch ? priceMatch[0] : '',
+                details: lines.slice(0, 6).join(' | ')
+            };
+        })"""
+    )
+
+
+def _ps_build_results(items, max_results, seen, location_label):
+    results = []
+    for item in items:
+        href = item.get("href", "")
+        title = item.get("text", "").strip()
+        price = item.get("price", "")
+        details = item.get("details", "")
+        if not href or "/auction/view" not in href:
+            continue
+        full_url = "https://www.publicsurplus.com" + href if not href.startswith("http") else href
+        auc_id = re.search(r"auc=(\d+)", full_url)
+        key = auc_id.group(1) if auc_id else full_url
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(title) < 4:
+            title = f"Auction {key}"
+        results.append({
+            "url": full_url,
+            "title": title,
+            "current_bid": price,
+            "location": location_label,
+            "details": details,
+            "site": "publicsurplus",
+        })
+        if len(results) >= max_results:
+            break
+    return results
+
+
 def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
-    """Search PublicSurplus using zip+radius with Playwright (results are JS-rendered)."""
+    """Search PublicSurplus with Playwright. Tries local first, falls back to nationwide."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -80,7 +131,6 @@ def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results:
         return []
 
     from urllib.parse import quote
-    results = []
     seen = set()
 
     try:
@@ -88,63 +138,36 @@ def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
 
-            url = (
+            # 1. Try local zip+radius search
+            local_url = (
                 "https://www.publicsurplus.com/sms/browse/search"
                 f"?posting=y&page=1&sortBy=timeLeft&keyWord={quote(keywords)}"
                 f"&catId=&endHours=-1&startHours=-1&lowerPrice=&higherPrice="
                 f"&milesLocation={radius}&zipCode={zip_code}&region=&search=Search"
             )
-            page.goto(url, wait_until="networkidle", timeout=30000)
-            page.wait_for_timeout(2000)
+            items = _ps_scrape_url(page, local_url)
+            results = _ps_build_results(items, max_results, seen, f"within {radius}mi of {zip_code}")
 
-            items = page.eval_on_selector_all(
-                "a[href*='/auction/view']",
-                """els => els.map(e => {
-                    const card = e.closest('.auction-item, .ps-card, .card, li, tr') || e.parentElement;
-                    const cardText = card ? card.innerText : '';
-                    const priceMatch = cardText.match(/\\$[\\d,]+(?:\\.\\d{2})?/);
-                    const lines = cardText.split('\\n').map(l => l.trim()).filter(Boolean);
-                    return {
-                        href: e.getAttribute('href'),
-                        text: (e.innerText || e.textContent || '').trim(),
-                        price: priceMatch ? priceMatch[0] : '',
-                        details: lines.slice(0, 6).join(' | ')
-                    };
-                })"""
-            )
+            # 2. Nothing local — search nationwide
+            if not results:
+                print(f"PublicSurplus: no local results, showing nationwide for '{keywords}'", file=sys.stderr)
+                national_url = (
+                    "https://www.publicsurplus.com/sms/browse/search"
+                    f"?posting=y&page=1&sortBy=timeLeft&keyWord={quote(keywords)}"
+                    "&catId=&endHours=-1&startHours=-1&lowerPrice=&higherPrice="
+                    "&milesLocation=&zipCode=&region=&search=Search"
+                )
+                items = _ps_scrape_url(page, national_url)
+                results = _ps_build_results(items, max_results, seen, "nationwide")
 
             browser.close()
 
-        for item in items:
-            href = item.get("href", "")
-            title = item.get("text", "").strip()
-            price = item.get("price", "")
-            details = item.get("details", "")
-            if not href or "/auction/view" not in href:
-                continue
-            full_url = "https://www.publicsurplus.com" + href if not href.startswith("http") else href
-            auc_id = re.search(r"auc=(\d+)", full_url)
-            key = auc_id.group(1) if auc_id else full_url
-            if key in seen:
-                continue
-            seen.add(key)
-            if len(title) < 4:
-                title = f"Auction {key}"
-            results.append({
-                "url": full_url,
-                "title": title,
-                "current_bid": price,
-                "details": details,
-                "site": "publicsurplus",
-            })
-            if len(results) >= max_results:
-                break
-
     except Exception as e:
         print(f"PublicSurplus error: {e}", file=sys.stderr)
+        return []
 
     if not results:
-        print(f"PublicSurplus: 0 results for '{keywords}' within {radius} miles of {zip_code}", file=sys.stderr)
+        print(f"PublicSurplus: 0 results for '{keywords}'", file=sys.stderr)
     return results
 
 
