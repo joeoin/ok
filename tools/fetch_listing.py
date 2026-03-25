@@ -2,15 +2,15 @@
 """Fetch and parse a single auction listing page.
 
 Usage:
-    python tools/fetch_listing.py --url "https://www.govdeals.com/..."
     python tools/fetch_listing.py --url "https://www.publicsurplus.com/..."
+    python tools/fetch_listing.py --url "https://www.bidspotter.com/..."
+    python tools/fetch_listing.py --url "https://www.ironplanet.com/..."
 
 Output: JSON object with listing fields to stdout.
 On failure: JSON with {"error": "..."} and exit code 1.
 
 Requirements:
     pip install requests beautifulsoup4
-    pip install playwright && playwright install chromium   (only needed for GovDeals)
 """
 
 import argparse
@@ -42,60 +42,7 @@ def extract_price(text: str) -> float:
     return float(m.group(1)) if m else 0.0
 
 
-def parse_govdeals(soup: BeautifulSoup, url: str) -> dict:
-    result: dict = {"url": url, "site": "govdeals"}
-
-    h1 = soup.find("h1") or soup.find("h2")
-    result["title"] = h1.get_text(strip=True) if h1 else ""
-
-    lot_m = re.search(r"/en/asset/(\d+/\d+)", url) or re.search(r"[?&]invId=(\w+)", url)
-    result["lot"] = lot_m.group(1) if lot_m else ""
-
-    result["current_bid"] = 0.0
-    for label in soup.find_all(string=re.compile(r"Current Bid|High Bid|Starting Bid", re.I)):
-        parent = label.find_parent()
-        if parent:
-            val = extract_price(parent.get_text(" ", strip=True))
-            if val:
-                result["current_bid"] = val
-                break
-
-    result["end_date"] = ""
-    for label in soup.find_all(string=re.compile(r"Close Date|End Date|Auction Ends", re.I)):
-        parent = label.find_parent()
-        if parent:
-            date_text = parent.get_text(" ", strip=True)
-            date_m = re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", date_text)
-            if date_m:
-                result["end_date"] = date_m.group(0)
-                break
-
-    result["location"] = ""
-    for label in soup.find_all(string=re.compile(r"^Location$|^Pickup Location$", re.I)):
-        parent = label.find_parent()
-        if parent:
-            sib = parent.find_next_sibling()
-            if sib:
-                result["location"] = sib.get_text(strip=True)[:100]
-                break
-
-    photos = []
-    for img in soup.find_all("img", src=True):
-        src = img["src"]
-        if any(x in src.lower() for x in ["photo", "image", "img", "/items/"]):
-            if not src.startswith("http"):
-                src = "https://www.govdeals.com" + src
-            photos.append(src)
-    result["photos"] = list(dict.fromkeys(photos))[:10]
-
-    desc_el = (
-        soup.find("div", id=re.compile(r"desc", re.I))
-        or soup.find("div", class_=re.compile(r"desc|detail|item.?info", re.I))
-    )
-    result["description"] = desc_el.get_text(" ", strip=True)[:2000] if desc_el else ""
-
-    return result
-
+# ── Public Surplus ────────────────────────────────────────────────────────────
 
 def parse_publicsurplus(soup: BeautifulSoup, url: str) -> dict:
     result: dict = {"url": url, "site": "publicsurplus"}
@@ -107,7 +54,7 @@ def parse_publicsurplus(soup: BeautifulSoup, url: str) -> dict:
     result["lot"] = lot_m.group(1) if lot_m else ""
 
     result["current_bid"] = 0.0
-    for label in soup.find_all(string=re.compile(r"Current Bid|Minimum Bid", re.I)):
+    for label in soup.find_all(string=re.compile(r"Current Bid|Minimum Bid|High Bid", re.I)):
         parent = label.find_parent()
         if parent:
             val = extract_price(parent.get_text())
@@ -116,7 +63,7 @@ def parse_publicsurplus(soup: BeautifulSoup, url: str) -> dict:
                 break
 
     result["end_date"] = ""
-    for label in soup.find_all(string=re.compile(r"Auction Ends|Close Date", re.I)):
+    for label in soup.find_all(string=re.compile(r"Auction Ends|Close Date|Closing", re.I)):
         parent = label.find_parent()
         if parent:
             date_m = re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", parent.get_text(" "))
@@ -140,91 +87,176 @@ def parse_publicsurplus(soup: BeautifulSoup, url: str) -> dict:
     return result
 
 
-def fetch_govdeals_api(url: str) -> dict | None:
-    """Try GovDeals item API endpoint directly (no browser needed)."""
-    # Extract asset ID and seller ID from URL like /en/asset/12345/678
-    m = re.search(r"/en/asset/(\d+)/(\d+)", url)
+# ── BidSpotter ────────────────────────────────────────────────────────────────
+
+def parse_bidspotter(soup: BeautifulSoup, url: str) -> dict:
+    result: dict = {"url": url, "site": "bidspotter"}
+
+    h1 = soup.find("h1") or soup.find("h2")
+    result["title"] = h1.get_text(strip=True) if h1 else ""
+
+    lot_m = re.search(r"/lots/(\w+)", url)
+    result["lot"] = lot_m.group(1) if lot_m else ""
+
+    result["current_bid"] = 0.0
+    for label in soup.find_all(string=re.compile(r"Current Bid|Starting Bid|Reserve|Bid Now", re.I)):
+        parent = label.find_parent()
+        if parent:
+            val = extract_price(parent.get_text(" ", strip=True))
+            if val:
+                result["current_bid"] = val
+                break
+
+    result["end_date"] = ""
+    for label in soup.find_all(string=re.compile(r"Auction Ends|Closing|End Time|Close Date", re.I)):
+        parent = label.find_parent()
+        if parent:
+            date_m = re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", parent.get_text(" "))
+            if date_m:
+                result["end_date"] = date_m.group(0)
+                break
+
+    result["location"] = ""
+    for label in soup.find_all(string=re.compile(r"^Location$|Auction Location|Pickup", re.I)):
+        parent = label.find_parent()
+        if parent:
+            sib = parent.find_next_sibling()
+            loc_text = (sib.get_text(strip=True) if sib else parent.get_text(strip=True))
+            if loc_text:
+                result["location"] = loc_text[:100]
+                break
+
+    photos = []
+    for img in soup.find_all("img", src=True):
+        src = img["src"]
+        if any(x in src.lower() for x in ["photo", "image", "lot", "item", "/img/"]):
+            if not src.startswith("http"):
+                src = "https://www.bidspotter.com" + src
+            photos.append(src)
+    result["photos"] = list(dict.fromkeys(photos))[:10]
+
+    desc_el = (
+        soup.find("div", class_=re.compile(r"desc|detail|lot.?info|item.?info", re.I))
+        or soup.find("section", class_=re.compile(r"desc|detail", re.I))
+    )
+    result["description"] = desc_el.get_text(" ", strip=True)[:2000] if desc_el else ""
+
+    return result
+
+
+# ── Iron Planet ───────────────────────────────────────────────────────────────
+
+def fetch_ironplanet_api(url: str) -> dict | None:
+    """Try Iron Planet item JSON API endpoint (no browser needed)."""
+    m = re.search(r"/item/(\d+)", url)
     if not m:
         return None
-    asset_id, seller_id = m.group(1), m.group(2)
+    item_id = m.group(1)
     try:
         r = requests.get(
-            f"https://www.govdeals.com/api/v2/assets/{asset_id}",
-            params={"sellerId": seller_id},
-            headers={**HEADERS, "Accept": "application/json", "Referer": "https://www.govdeals.com/"},
+            f"https://www.ironplanet.com/rest/items/{item_id}",
+            headers={**HEADERS, "Accept": "application/json"},
             timeout=15,
         )
-        if r.status_code == 200 and "json" in r.headers.get("Content-Type", ""):
+        ct = r.headers.get("Content-Type", "")
+        if r.status_code == 200 and "json" in ct:
             item = r.json()
-            return {
-                "url": url,
-                "site": "govdeals",
-                "title": item.get("title") or item.get("name", ""),
-                "lot": f"{asset_id}/{seller_id}",
-                "current_bid": float(item.get("currentBid") or item.get("currentPrice") or 0),
-                "end_date": (item.get("closeDate") or item.get("endDate") or "")[:10],
-                "location": item.get("location") or item.get("city") or "",
-                "photos": item.get("photos") or item.get("images") or [],
-                "description": item.get("description") or "",
-            }
+            title = item.get("title") or item.get("name") or item.get("description", "")
+            if title:
+                return {
+                    "url": url,
+                    "site": "ironplanet",
+                    "title": title,
+                    "lot": str(item_id),
+                    "current_bid": float(item.get("currentBid") or item.get("price") or item.get("currentPrice") or 0),
+                    "end_date": (item.get("closeDate") or item.get("endDate") or item.get("saleDate") or "")[:10],
+                    "location": item.get("location") or item.get("city") or item.get("region") or "",
+                    "photos": item.get("photos") or item.get("images") or [],
+                    "description": item.get("description") or item.get("longDescription") or "",
+                }
     except Exception as e:
-        print(f"GovDeals item API failed for {url}: {e}", file=sys.stderr)
+        print(f"Iron Planet item API failed for {url}: {e}", file=sys.stderr)
     return None
 
 
-def fetch_govdeals_playwright(url: str) -> str:
-    """Fetch GovDeals listing page via browser (fallback when API fails)."""
-    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+def parse_ironplanet(soup: BeautifulSoup, url: str) -> dict:
+    result: dict = {"url": url, "site": "ironplanet"}
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
-        )
-        page = browser.new_page(
-            user_agent=HEADERS["User-Agent"],
-        )
-        page.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-        page.goto(url, timeout=30000, wait_until="domcontentloaded")
-        try:
-            page.wait_for_selector(
-                "text=/Current Bid|High Bid|Starting Bid/i", timeout=12000
-            )
-        except PlaywrightTimeout:
-            pass
-        html = page.content()
-        browser.close()
-    return html
+    h1 = soup.find("h1") or soup.find("h2")
+    result["title"] = h1.get_text(strip=True) if h1 else ""
 
+    item_m = re.search(r"/item/(\d+)", url)
+    result["lot"] = item_m.group(1) if item_m else ""
+
+    result["current_bid"] = 0.0
+    for label in soup.find_all(string=re.compile(r"Current Bid|Winning Bid|Reserve Price|Buy Now|Starting Bid", re.I)):
+        parent = label.find_parent()
+        if parent:
+            val = extract_price(parent.get_text(" ", strip=True))
+            if val:
+                result["current_bid"] = val
+                break
+
+    result["end_date"] = ""
+    for label in soup.find_all(string=re.compile(r"Auction Closes|Closing Date|Sale Date|End Date", re.I)):
+        parent = label.find_parent()
+        if parent:
+            date_m = re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", parent.get_text(" "))
+            if date_m:
+                result["end_date"] = date_m.group(0)
+                break
+
+    result["location"] = ""
+    for label in soup.find_all(string=re.compile(r"^Location$|Country|Region|Yard", re.I)):
+        parent = label.find_parent()
+        if parent:
+            sib = parent.find_next_sibling()
+            loc_text = (sib.get_text(strip=True) if sib else "")
+            if loc_text:
+                result["location"] = loc_text[:100]
+                break
+
+    photos = []
+    for img in soup.find_all("img", src=True):
+        src = img["src"]
+        if any(x in src.lower() for x in ["photo", "image", "item", "equipment", "/photos/"]):
+            if not src.startswith("http"):
+                src = "https://www.ironplanet.com" + src
+            photos.append(src)
+    result["photos"] = list(dict.fromkeys(photos))[:10]
+
+    desc_el = (
+        soup.find("div", class_=re.compile(r"desc|detail|condition|spec|info", re.I))
+    )
+    result["description"] = desc_el.get_text(" ", strip=True)[:2000] if desc_el else ""
+
+    return result
+
+
+# ── Main fetch dispatcher ─────────────────────────────────────────────────────
 
 def fetch(url: str) -> dict:
-    if "govdeals.com" in url:
-        # Try API first (no browser needed)
-        api_result = fetch_govdeals_api(url)
+    if "ironplanet.com" in url:
+        # Try JSON API first (no browser needed)
+        api_result = fetch_ironplanet_api(url)
         if api_result and api_result.get("title"):
             return api_result
-        # Fall back to Playwright
-        try:
-            html = fetch_govdeals_playwright(url)
-            soup = BeautifulSoup(html, "html.parser")
-            return parse_govdeals(soup, url)
-        except ImportError:
-            raise RuntimeError(
-                "GovDeals requires a browser. Run: pip install playwright && playwright install chromium"
-            )
+        # Fall back to HTML
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        return parse_ironplanet(soup, url)
 
     r = requests.get(url, headers=HEADERS, timeout=20)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
+
     if "publicsurplus.com" in url:
         return parse_publicsurplus(soup, url)
-    return parse_govdeals(soup, url)
+    if "bidspotter.com" in url:
+        return parse_bidspotter(soup, url)
+
+    return {"url": url, "site": "unknown", "error": "Unsupported site"}
 
 
 def main():

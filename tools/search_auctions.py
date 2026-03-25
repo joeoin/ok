@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Search GovDeals and PublicSurplus for auction listings.
+"""Search PublicSurplus, BidSpotter, and Iron Planet for auction listings.
 
 Usage:
     python tools/search_auctions.py --state AZ --category "Tools & Equipment" --max 3
@@ -31,126 +31,6 @@ HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
 }
-
-
-def search_govdeals_api(state: str, keywords: str, max_results: int) -> list[dict]:
-    """Try GovDeals via their internal JSON API (no browser needed)."""
-    results = []
-    try:
-        r = requests.get(
-            "https://www.govdeals.com/api/v2/search",
-            params={
-                "keyword": keywords,
-                "state": state,
-                "pageSize": max_results * 3,
-                "sortBy": "endDateAsc",
-            },
-            headers={
-                **HEADERS,
-                "Accept": "application/json, text/plain, */*",
-                "Referer": "https://www.govdeals.com/",
-                "X-Requested-With": "XMLHttpRequest",
-            },
-            timeout=15,
-        )
-        # Only proceed if we actually got JSON back
-        ct = r.headers.get("Content-Type", "")
-        if r.status_code == 200 and "json" in ct:
-            data = r.json()
-            # Response is {"assets": [...]} or {"results": [...]} — try both
-            items = data.get("assets") or data.get("results") or data.get("items") or []
-            for item in items[:max_results]:
-                asset_id = item.get("assetId") or item.get("id") or item.get("assetNumber", "")
-                seller_id = item.get("sellerId") or item.get("agencyId") or ""
-                title = item.get("title") or item.get("name") or item.get("description", "")
-                if asset_id and title:
-                    url = f"https://www.govdeals.com/en/asset/{asset_id}/{seller_id}"
-                    results.append({"url": url, "title": title.strip(), "site": "govdeals"})
-            if results:
-                return results
-        print(f"GovDeals API: status {r.status_code}, content-type '{ct}' — trying Playwright", file=sys.stderr)
-    except Exception as e:
-        print(f"GovDeals API error: {e} — trying Playwright", file=sys.stderr)
-    return results
-
-
-def search_govdeals_playwright(state: str, keywords: str, max_results: int) -> list[dict]:
-    """Fallback: scrape GovDeals with a real browser (requires playwright install)."""
-    results = []
-    try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
-    except ImportError:
-        print("GovDeals Playwright skipped: run 'pip install playwright && playwright install chromium'", file=sys.stderr)
-        return results
-
-    search_url = (
-        f"https://www.govdeals.com/en/search"
-        f"?keyword={requests.utils.quote(keywords)}"
-        f"&state={state}"
-        f"&pageSize={max_results * 3}"
-        f"&sortBy=endDateAsc"
-    )
-
-    try:
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                ],
-            )
-            context = browser.new_context(
-                user_agent=HEADERS["User-Agent"],
-                viewport={"width": 1920, "height": 1080},
-                locale="en-US",
-            )
-            page = context.new_page()
-            page.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
-            page.goto(search_url, timeout=30000, wait_until="domcontentloaded")
-
-            if "Access Denied" in (page.title() or "") or "blocked" in page.url.lower():
-                print("GovDeals Playwright: blocked by bot detection", file=sys.stderr)
-                browser.close()
-                return results
-
-            try:
-                page.wait_for_selector("a[href*='/en/asset/']", timeout=20000)
-            except PlaywrightTimeout:
-                print("GovDeals Playwright: timed out waiting for results", file=sys.stderr)
-                browser.close()
-                return results
-
-            best = {}
-            for a in page.query_selector_all("a[href*='/en/asset/']"):
-                href = a.get_attribute("href") or ""
-                if not href.startswith("http"):
-                    href = "https://www.govdeals.com" + href
-                title = (a.inner_text() or "").strip()
-                if len(title) > 5 and title.upper() != "ONLINE AUCTION" and href not in best:
-                    best[href] = title
-
-            for href, title in list(best.items())[:max_results]:
-                results.append({"url": href, "title": title, "site": "govdeals"})
-
-            browser.close()
-    except Exception as e:
-        print(f"GovDeals Playwright error: {e}", file=sys.stderr)
-
-    return results
-
-
-def search_govdeals(state: str, keywords: str, max_results: int) -> list[dict]:
-    """Search GovDeals: tries API first, falls back to Playwright."""
-    results = search_govdeals_api(state, keywords, max_results)
-    if not results:
-        results = search_govdeals_playwright(state, keywords, max_results)
-    if not results:
-        print(f"GovDeals: 0 results for '{keywords}' in {state}", file=sys.stderr)
-    return results
 
 
 def search_publicsurplus(state: str, keywords: str, max_results: int) -> list[dict]:
@@ -191,6 +71,115 @@ def search_publicsurplus(state: str, keywords: str, max_results: int) -> list[di
     return results
 
 
+def search_bidspotter(keywords: str, max_results: int) -> list[dict]:
+    """Search BidSpotter for individual auction lots."""
+    results = []
+    try:
+        r = requests.get(
+            "https://www.bidspotter.com/en-us/auction-catalogues",
+            params={"q": keywords, "pageNo": 1},
+            headers=HEADERS,
+            timeout=20,
+        )
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        seen = set()
+        # BidSpotter lot URLs contain /lots/ in the path
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "/lots/" in href:
+                if not href.startswith("http"):
+                    href = "https://www.bidspotter.com" + href
+                if href not in seen:
+                    seen.add(href)
+                    title = a.get_text(strip=True)
+                    if len(title) > 5:
+                        results.append({"url": href, "title": title, "site": "bidspotter"})
+                        if len(results) >= max_results:
+                            break
+
+        if not results:
+            print(f"BidSpotter: 0 results for '{keywords}'", file=sys.stderr)
+    except Exception as e:
+        print(f"BidSpotter search error: {e}", file=sys.stderr)
+    return results
+
+
+def search_ironplanet_api(keywords: str, state: str, max_results: int) -> list[dict]:
+    """Try Iron Planet JSON search API (no browser needed)."""
+    results = []
+    try:
+        r = requests.get(
+            "https://www.ironplanet.com/rest/items",
+            params={
+                "q": keywords,
+                "state": state,
+                "pageSize": max_results,
+                "status": "UPCOMING,ACTIVE",
+            },
+            headers={**HEADERS, "Accept": "application/json"},
+            timeout=15,
+        )
+        ct = r.headers.get("Content-Type", "")
+        if r.status_code == 200 and "json" in ct:
+            data = r.json()
+            items = data.get("items") or data.get("results") or data.get("data") or []
+            for item in items[:max_results]:
+                item_id = item.get("id") or item.get("itemId") or item.get("inventoryId", "")
+                title = item.get("title") or item.get("name") or item.get("description", "")
+                if item_id and title:
+                    url = f"https://www.ironplanet.com/item/{item_id}"
+                    results.append({"url": url, "title": title.strip(), "site": "ironplanet"})
+            if results:
+                return results
+        print(f"Iron Planet API: status {r.status_code}, content-type '{ct}' — trying HTML", file=sys.stderr)
+    except Exception as e:
+        print(f"Iron Planet API error: {e} — trying HTML", file=sys.stderr)
+    return results
+
+
+def search_ironplanet_html(keywords: str, state: str, max_results: int) -> list[dict]:
+    """Fallback: scrape Iron Planet search results page."""
+    results = []
+    try:
+        r = requests.get(
+            "https://www.ironplanet.com/results",
+            params={"q": keywords, "state": state},
+            headers=HEADERS,
+            timeout=20,
+        )
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        seen = set()
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if re.search(r"/item/\d+", href):
+                if not href.startswith("http"):
+                    href = "https://www.ironplanet.com" + href
+                if href not in seen:
+                    seen.add(href)
+                    title = a.get_text(strip=True)
+                    if len(title) > 5:
+                        results.append({"url": href, "title": title, "site": "ironplanet"})
+                        if len(results) >= max_results:
+                            break
+    except Exception as e:
+        print(f"Iron Planet HTML error: {e}", file=sys.stderr)
+    return results
+
+
+def search_ironplanet(keywords: str, state: str, max_results: int) -> list[dict]:
+    """Search Iron Planet: tries JSON API first, falls back to HTML."""
+    results = search_ironplanet_api(keywords, state, max_results)
+    if not results:
+        results = search_ironplanet_html(keywords, state, max_results)
+    if not results:
+        print(f"Iron Planet: 0 results for '{keywords}' in {state}", file=sys.stderr)
+    return results
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--state", required=True, help="Two-letter state code, e.g. AZ")
@@ -202,9 +191,11 @@ def main():
     term = args.keywords or args.category
 
     results = []
-    results += search_govdeals(args.state, term, args.max)
-    time.sleep(0.5)
     results += search_publicsurplus(args.state, term, args.max)
+    time.sleep(0.5)
+    results += search_bidspotter(term, args.max)
+    time.sleep(0.5)
+    results += search_ironplanet(term, args.state, args.max)
 
     print(json.dumps(results))
 

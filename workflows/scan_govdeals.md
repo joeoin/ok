@@ -1,8 +1,13 @@
-# Workflow: Scan Government Surplus Auctions
+# Workflow: Scan Surplus Auctions
 
 ## Objective
-Find government surplus auction items near the user's location with profitable resale
+Find surplus auction items near the user's location with profitable resale
 potential on Facebook Marketplace.
+
+## Sites
+- **PublicSurplus** (publicsurplus.com) — government surplus, HTTP + BeautifulSoup
+- **BidSpotter** (bidspotter.com) — multi-auctioneer platform, HTTP + BeautifulSoup
+- **Iron Planet** (ironplanet.com) — equipment auctions, JSON API with HTML fallback
 
 ## Setup — Read config before starting
 
