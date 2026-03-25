@@ -46,48 +46,62 @@ def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results:
 
     results = []
     try:
+        from urllib.parse import quote
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
 
+            # First try zip+radius search for local results
             url = (
                 "https://www.publicsurplus.com/sms/browse/search"
-                f"?posting=y&page=1&sortBy=timeLeft&keyWord={requests.utils.quote(keywords)}"
+                f"?posting=y&page=1&sortBy=timeLeft&keyWord={quote(keywords)}"
                 f"&catId=&endHours=-1&startHours=-1&lowerPrice=&higherPrice="
                 f"&milesLocation={radius}&zipCode={zip_code}&region=&search=Search"
             )
             page.goto(url, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(1500)
 
-            # Wait for auction rows to appear
-            try:
-                page.wait_for_selector("a[href*='auctionId'], a[href*='/auction/view']", timeout=10000)
-            except Exception:
-                pass  # No results or timeout — fall through to link scan
+            hrefs = page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
+            auction_hrefs = [h for h in hrefs if h and "/auction/view" in h]
 
-            content = page.content()
+            # If nothing local, fall back to nationwide search
+            if not auction_hrefs:
+                url2 = (
+                    "https://www.publicsurplus.com/sms/browse/search"
+                    f"?posting=y&page=1&sortBy=timeLeft&keyWord={quote(keywords)}"
+                    "&catId=&endHours=-1&startHours=-1&lowerPrice=&higherPrice="
+                    "&milesLocation=&zipCode=&region=&search=Search"
+                )
+                page.goto(url2, wait_until="networkidle", timeout=30000)
+                page.wait_for_timeout(1500)
+                hrefs = page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
+                auction_hrefs = [h for h in hrefs if h and "/auction/view" in h]
+
+            html = page.content()
             browser.close()
 
-        soup = BeautifulSoup(content, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
         seen = set()
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            if "/auction/view" in href or "auctionId=" in href:
-                if not href.startswith("http"):
-                    href = "https://www.publicsurplus.com" + href
-                if href not in seen:
-                    seen.add(href)
-                    title = a.get_text(strip=True)
-                    if len(title) > 5:
-                        results.append({"url": href, "title": title, "site": "publicsurplus"})
-                        if len(results) >= max_results:
-                            break
+            if "/auction/view" not in href:
+                continue
+            if not href.startswith("http"):
+                href = "https://www.publicsurplus.com" + href
+            if href in seen:
+                continue
+            seen.add(href)
+            title = a.get_text(strip=True)
+            if len(title) > 5:
+                results.append({"url": href, "title": title, "site": "publicsurplus"})
+                if len(results) >= max_results:
+                    break
 
     except Exception as e:
         print(f"PublicSurplus error: {e}", file=sys.stderr)
 
     if not results:
-        print(f"PublicSurplus: 0 results for '{keywords}' near {zip_code}", file=sys.stderr)
+        print(f"PublicSurplus: 0 results for '{keywords}'", file=sys.stderr)
     return results
 
 
