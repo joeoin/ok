@@ -176,8 +176,15 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
 
     Item URL format confirmed from live HTML:
       /for-sale/{Category-Year-Brand-Description-State}/{itemId}?...
+
+    The keyword search page always includes a few featured/promoted Arizona
+    items regardless of the search query. We filter these out by requiring
+    at least one meaningful keyword word to appear in the item title.
     """
     results = []
+    # Words from the keyword that are long enough to be meaningful
+    kw_words = [w for w in re.split(r"\W+", keywords.lower()) if len(w) > 3]
+
     try:
         r = requests.get(
             "https://www.ironplanet.com/jsp/s/search.ips",
@@ -194,22 +201,27 @@ def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
             href = a["href"]
             if not item_re.match(href):
                 continue
-            # Strip query string for a clean canonical URL
             clean = "https://www.ironplanet.com" + href.split("?")[0]
             if clean in seen:
                 continue
             seen.add(clean)
 
             title = a.get_text(strip=True)
-            # Fallback: build title from URL slug when anchor text is empty/icon-only
             if len(title) < 6:
                 slug = href.split("?")[0].rsplit("/", 2)[-2]
                 title = re.sub(r"-%28.*?%29", "", slug).replace("-", " ").strip()
 
-            if len(title) > 5:
-                results.append({"url": clean, "title": title, "site": "ironplanet"})
-                if len(results) >= max_results:
-                    break
+            if len(title) <= 5:
+                continue
+
+            # Skip items that share no words with the keyword — these are
+            # featured/promoted items unrelated to the search
+            if kw_words and not any(w in title.lower() for w in kw_words):
+                continue
+
+            results.append({"url": clean, "title": title, "site": "ironplanet"})
+            if len(results) >= max_results:
+                break
 
         if not results:
             print(f"Iron Planet: 0 results for '{keywords}'", file=sys.stderr)
