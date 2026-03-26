@@ -150,72 +150,53 @@ def scrape_publicsurplus(zip_code: str, radius: int, hours: int, max_listings: i
 
 # ── Facebook Marketplace price lookup ─────────────────────────────────────────
 
-_fb_logged_in = False
-_fb_browser = None
-_fb_context = None
-
-def _get_fb_browser():
-    """Return a persistent logged-in FB Playwright browser context."""
-    global _fb_logged_in, _fb_browser, _fb_context
-    if _fb_logged_in:
-        return _fb_context
-
-    from playwright.sync_api import sync_playwright
-    email = os.environ.get("FB_EMAIL", "")
-    password = os.environ.get("FB_PASSWORD", "")
-    if not email or not password:
-        print("FB credentials not set in .env — skipping FB Marketplace", file=sys.stderr)
-        return None
-
-    try:
-        pw = sync_playwright().start()
-        _fb_browser = pw.chromium.launch(headless=True)
-        _fb_context = _fb_browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-        page = _fb_context.new_page()
-        page.goto("https://www.facebook.com/login", wait_until="load", timeout=30000)
-        page.fill("#email", email)
-        page.fill("#pass", password)
-        page.click("[name='login']")
-        page.wait_for_timeout(4000)
-        if "login" in page.url or "checkpoint" in page.url:
-            print("FB login failed or checkpoint triggered — skipping FB prices", file=sys.stderr)
-            return None
-        _fb_logged_in = True
-        print("FB Marketplace: logged in successfully", file=sys.stderr)
-        page.close()
-        return _fb_context
-    except Exception as e:
-        print(f"FB login error: {e}", file=sys.stderr)
-        return None
-
-
 def get_fb_comps(title: str) -> dict:
     """Search Facebook Marketplace for current listing prices near Phoenix AZ."""
+    from playwright.sync_api import sync_playwright
     from urllib.parse import quote_plus
+
     words = [w for w in re.split(r"\W+", title) if len(w) > 2][:5]
     query = " ".join(words)
     if not query:
         return {"prices": [], "avg": 0, "count": 0, "query": query}
 
-    ctx = _get_fb_browser()
-    if not ctx:
+    email = os.environ.get("FB_EMAIL", "")
+    password = os.environ.get("FB_PASSWORD", "")
+    if not email or not password:
+        print("FB credentials not set in .env", file=sys.stderr)
         return {"prices": [], "avg": 0, "count": 0, "query": query}
 
     try:
-        page = ctx.new_page()
-        # Search FB Marketplace near Phoenix (lat/lon for 85260)
-        url = f"https://www.facebook.com/marketplace/phoenix/search?query={quote_plus(query)}&exact=false"
-        page.goto(url, wait_until="load", timeout=30000)
-        page.wait_for_timeout(3000)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+            page = ctx.new_page()
 
-        # Extract listing prices
-        prices_raw = page.eval_on_selector_all(
-            "span[dir='auto']",
-            "els => els.map(e => e.innerText.trim()).filter(t => t.startsWith('$'))"
-        )
-        page.close()
+            # Login
+            page.goto("https://www.facebook.com/login", wait_until="load", timeout=30000)
+            page.wait_for_selector("input[name='email']", timeout=10000)
+            page.fill("input[name='email']", email)
+            page.fill("input[name='pass']", password)
+            page.click("button[name='login']")
+            page.wait_for_timeout(4000)
+
+            if "login" in page.url or "checkpoint" in page.url:
+                print("FB login failed", file=sys.stderr)
+                browser.close()
+                return {"prices": [], "avg": 0, "count": 0, "query": query}
+
+            # Search Marketplace
+            url = f"https://www.facebook.com/marketplace/phoenix/search?query={quote_plus(query)}&exact=false"
+            page.goto(url, wait_until="load", timeout=30000)
+            page.wait_for_timeout(3000)
+
+            prices_raw = page.eval_on_selector_all(
+                "span[dir='auto']",
+                "els => els.map(e => e.innerText.trim()).filter(t => t.startsWith('$'))"
+            )
+            browser.close()
 
         prices = []
         for text in prices_raw:
@@ -245,7 +226,7 @@ def get_fb_comps(title: str) -> dict:
             "source": "facebook_marketplace",
         }
     except Exception as e:
-        print(f"FB Marketplace lookup failed for '{title}': {e}", file=sys.stderr)
+        print(f"FB lookup failed for '{title}': {e}", file=sys.stderr)
         return {"prices": [], "avg": 0, "count": 0, "query": query}
 
 
