@@ -230,35 +230,79 @@ def get_fb_comps(title: str) -> dict:
         return {"prices": [], "avg": 0, "count": 0, "query": query}
 
 
-# ── Deal analysis ──────────────────────────────────────────────────────────────
+# ── Listing detail scraper ────────────────────────────────────────────────────
 
-def analyze_deals(listings: list[dict], min_ratio: float) -> list[dict]:
+def get_listing_details(url: str) -> dict:
+    """Visit a PublicSurplus listing page and extract full item description."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, wait_until="load", timeout=30000)
+            page.wait_for_timeout(1500)
+
+            details = page.eval_on_selector_all("*", """els => {
+                const get = sel => {
+                    const el = document.querySelector(sel);
+                    return el ? el.innerText.trim() : '';
+                };
+                return {
+                    title: get('h1, h2, .auction-title, [class*="title"]'),
+                    description: get('.auction-description, [class*="desc"], #description, .item-desc'),
+                    condition: get('[class*="condition"], [class*="status"]'),
+                    location: get('[class*="location"], [class*="pickup"], [class*="agency"]'),
+                    photos: document.querySelectorAll('img[src*="auction"], img[src*="photo"], img[src*="img"]').length
+                };
+            }""")
+            browser.close()
+            return details[0] if details else {}
+    except Exception as e:
+        return {}
+
+
+
+def analyze_deals(listings: list[dict], min_ratio: float, min_profit: float) -> list[dict]:
     deals = []
     total = len(listings)
     for i, listing in enumerate(listings):
-        title = listing["title"]
         price = listing["price"]
         if price <= 0:
             continue
 
-        print(f"[{i+1}/{total}] Checking FB Marketplace: {title}", file=sys.stderr)
-        comps = get_fb_comps(title)
+        # Get full listing details to identify the specific item
+        print(f"[{i+1}/{total}] Getting listing details: {listing['title']}", file=sys.stderr)
+        details = get_listing_details(listing["url"])
+
+        # Use full title from listing page if available
+        full_title = details.get("title", "") or listing["title"]
+        if len(full_title) < 4:
+            full_title = listing["title"]
+        listing["title"] = full_title
+        listing["description"] = details.get("description", "")
+        listing["condition"] = details.get("condition", "")
+        listing["pickup_location"] = details.get("location", listing.get("location", "AZ"))
+        listing["photo_count"] = details.get("photos", 0)
+
+        print(f"[{i+1}/{total}] Checking FB Marketplace: {full_title}", file=sys.stderr)
+        comps = get_fb_comps(full_title)
 
         if comps["count"] == 0:
             continue
 
         # Use conservative estimate: lower of avg and median
         resale = min(comps["avg"], comps.get("median", comps["avg"]))
-        # Reduce by 30% if listed as as-is/untested
         risk_flags = []
-        card_lower = listing.get("card_text", "").lower()
+        card_lower = (listing.get("card_text", "") + " " + listing.get("description", "")).lower()
         if any(w in card_lower for w in ["as-is", "as is", "untested", "for parts", "unknown condition", "non-working"]):
             resale *= 0.70
             risk_flags.append("AS-IS / Condition risk (-30% applied)")
 
         profit_ratio = resale / price if price > 0 else 0
+        est_profit = resale - price
 
-        if profit_ratio < min_ratio:
+        # Must meet BOTH ratio AND minimum dollar profit
+        if profit_ratio < min_ratio or est_profit < min_profit:
             continue
 
         confidence = "HIGH" if comps["count"] >= 5 else ("MED" if comps["count"] >= 3 else "LOW")
@@ -346,8 +390,9 @@ def main():
     p.add_argument("--zip",       default="85260", help="ZIP code (default: 85260 Scottsdale AZ)")
     p.add_argument("--radius",    type=int, default=100)
     p.add_argument("--hours",     type=int, default=24, help="Max hours until closing")
-    p.add_argument("--min-ratio", type=float, default=1.8, help="Min profit ratio (default 1.8)")
-    p.add_argument("--max",       type=int, default=50, help="Max listings to scrape")
+    p.add_argument("--min-ratio",  type=float, default=1.8,  help="Min profit ratio (default 1.8)")
+    p.add_argument("--min-profit", type=float, default=100.0, help="Min dollar profit (default $100)")
+    p.add_argument("--max",        type=int,   default=50,   help="Max listings to scrape")
     p.add_argument("--json",      action="store_true", help="Output raw JSON instead of formatted text")
     args = p.parse_args()
 
@@ -356,8 +401,8 @@ def main():
         print("No listings found. Check your zip/radius/hours settings.")
         sys.exit(0)
 
-    print(f"\nAnalyzing {len(listings)} listings for {args.min_ratio}x profit deals...\n", file=sys.stderr)
-    deals = analyze_deals(listings, args.min_ratio)
+    print(f"\nAnalyzing {len(listings)} listings for {args.min_ratio}x + ${args.min_profit:.0f} min profit...\n", file=sys.stderr)
+    deals = analyze_deals(listings, args.min_ratio, args.min_profit)
 
     if args.json:
         print(json.dumps(deals, indent=2))
