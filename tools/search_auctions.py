@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -21,6 +22,16 @@ try:
     from bs4 import BeautifulSoup
 except ImportError:
     sys.exit("Missing deps: pip install requests beautifulsoup4")
+
+# Load .env if present
+_env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+if os.path.exists(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
 
 
 # ── PublicSurplus scraper ──────────────────────────────────────────────────────
@@ -137,32 +148,74 @@ def scrape_publicsurplus(zip_code: str, radius: int, hours: int, max_listings: i
     return listings
 
 
-# ── eBay sold comps ────────────────────────────────────────────────────────────
+# ── Facebook Marketplace price lookup ─────────────────────────────────────────
 
-def get_ebay_comps(title: str) -> dict:
-    """Get sold listing prices from eBay for the given title."""
-    words = [w for w in re.split(r"\W+", title) if len(w) > 2][:6]
+_fb_logged_in = False
+_fb_browser = None
+_fb_context = None
+
+def _get_fb_browser():
+    """Return a persistent logged-in FB Playwright browser context."""
+    global _fb_logged_in, _fb_browser, _fb_context
+    if _fb_logged_in:
+        return _fb_context
+
+    from playwright.sync_api import sync_playwright
+    email = os.environ.get("FB_EMAIL", "")
+    password = os.environ.get("FB_PASSWORD", "")
+    if not email or not password:
+        print("FB credentials not set in .env — skipping FB Marketplace", file=sys.stderr)
+        return None
+
+    try:
+        pw = sync_playwright().start()
+        _fb_browser = pw.chromium.launch(headless=True)
+        _fb_context = _fb_browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+        page = _fb_context.new_page()
+        page.goto("https://www.facebook.com/login", wait_until="load", timeout=30000)
+        page.fill("#email", email)
+        page.fill("#pass", password)
+        page.click("[name='login']")
+        page.wait_for_timeout(4000)
+        if "login" in page.url or "checkpoint" in page.url:
+            print("FB login failed or checkpoint triggered — skipping FB prices", file=sys.stderr)
+            return None
+        _fb_logged_in = True
+        print("FB Marketplace: logged in successfully", file=sys.stderr)
+        page.close()
+        return _fb_context
+    except Exception as e:
+        print(f"FB login error: {e}", file=sys.stderr)
+        return None
+
+
+def get_fb_comps(title: str) -> dict:
+    """Search Facebook Marketplace for current listing prices near Phoenix AZ."""
+    from urllib.parse import quote_plus
+    words = [w for w in re.split(r"\W+", title) if len(w) > 2][:5]
     query = " ".join(words)
     if not query:
         return {"prices": [], "avg": 0, "count": 0, "query": query}
 
+    ctx = _get_fb_browser()
+    if not ctx:
+        return {"prices": [], "avg": 0, "count": 0, "query": query}
+
     try:
-        from playwright.sync_api import sync_playwright
-        from urllib.parse import quote_plus
-        url = f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}&LH_Complete=1&LH_Sold=1&_sop=13"
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, wait_until="load", timeout=30000)
-            try:
-                page.wait_for_selector(".s-item__price", timeout=8000)
-            except Exception:
-                pass
-            prices_raw = page.eval_on_selector_all(
-                ".s-item__price",
-                "els => els.map(e => e.innerText.trim())"
-            )
-            browser.close()
+        page = ctx.new_page()
+        # Search FB Marketplace near Phoenix (lat/lon for 85260)
+        url = f"https://www.facebook.com/marketplace/phoenix/search?query={quote_plus(query)}&exact=false"
+        page.goto(url, wait_until="load", timeout=30000)
+        page.wait_for_timeout(3000)
+
+        # Extract listing prices
+        prices_raw = page.eval_on_selector_all(
+            "span[dir='auto']",
+            "els => els.map(e => e.innerText.trim()).filter(t => t.startsWith('$'))"
+        )
+        page.close()
 
         prices = []
         for text in prices_raw:
@@ -189,9 +242,10 @@ def get_ebay_comps(title: str) -> dict:
             "high": prices[-1],
             "count": len(prices),
             "query": query,
+            "source": "facebook_marketplace",
         }
     except Exception as e:
-        print(f"eBay lookup failed for '{title}': {e}", file=sys.stderr)
+        print(f"FB Marketplace lookup failed for '{title}': {e}", file=sys.stderr)
         return {"prices": [], "avg": 0, "count": 0, "query": query}
 
 
@@ -206,8 +260,8 @@ def analyze_deals(listings: list[dict], min_ratio: float) -> list[dict]:
         if price <= 0:
             continue
 
-        print(f"[{i+1}/{total}] Checking eBay comps: {title}", file=sys.stderr)
-        comps = get_ebay_comps(title)
+        print(f"[{i+1}/{total}] Checking FB Marketplace: {title}", file=sys.stderr)
+        comps = get_fb_comps(title)
 
         if comps["count"] == 0:
             continue
@@ -268,11 +322,11 @@ TIME REMAINING:  {d['time_left']}
 BIDS:            {d['bids']}
 LOCATION:        {d.get('location', 'AZ')}
 
-RESALE COMPS (eBay sold — "{d['ebay_query']}"):
+RESALE COMPS (FB Marketplace Phoenix — "{d['ebay_query']}"):
   Avg:    ${d['ebay_avg']:,.0f}
   Median: ${d['ebay_median']:,.0f}
   Range:  ${d['ebay_low']:,.0f} – ${d['ebay_high']:,.0f}
-  Comps:  {d['ebay_count']} sold listings
+  Comps:  {d['ebay_count']} active listings
   Est. quick-sale value: ${d['resale_estimate']:,.0f}
 
 PROFIT RATIO:    {d['profit_ratio']:.1f}x
