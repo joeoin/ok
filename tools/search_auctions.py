@@ -145,7 +145,17 @@ def scrape_publicsurplus(zip_code: str, radius: int, hours: int, max_listings: i
             break
 
     print(f"Found {len(listings)} listings closing within {hours}h near {zip_code}", file=sys.stderr)
-    return listings
+
+    # Deduplicate by normalized title
+    seen_titles = set()
+    unique = []
+    for l in listings:
+        key = re.sub(r"\W+", " ", l["title"].lower()).strip()
+        if key not in seen_titles:
+            seen_titles.add(key)
+            unique.append(l)
+    print(f"After dedup: {len(unique)} unique listings", file=sys.stderr)
+    return unique
 
 
 # ── Facebook Marketplace price lookup ─────────────────────────────────────────
@@ -183,9 +193,10 @@ def get_fb_comps(title: str) -> dict:
             page.wait_for_timeout(5000)
 
             if "login" in page.url or "checkpoint" in page.url:
-                print("FB login failed", file=sys.stderr)
+                print(f"FB login failed — still on: {page.url}", file=sys.stderr)
                 browser.close()
                 return {"prices": [], "avg": 0, "count": 0, "query": query}
+            print(f"FB logged in OK — searching: {query}", file=sys.stderr)
 
             # Search Marketplace
             url = f"https://www.facebook.com/marketplace/phoenix/search?query={quote_plus(query)}&exact=false"
