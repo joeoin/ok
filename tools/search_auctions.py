@@ -1,104 +1,77 @@
 #!/usr/bin/env python3
-"""Search PublicSurplus and Iron Planet for auction listings.
+"""
+PublicSurplus deal-finder agent.
+
+Scrapes listings closing within 24 hours near zip 85260 (100mi radius),
+looks up eBay sold comps, and surfaces only deals with profit_ratio >= 1.8x.
 
 Usage:
-    python tools/search_auctions.py --state AZ --zip 85001 --radius 100 --keywords "tools" --max 5
-
-Output: JSON array of {url, title, site} to stdout.
+    python tools/search_auctions.py
+    python tools/search_auctions.py --zip 85260 --radius 100 --hours 24 --min-ratio 1.8 --max 10
 """
 
 import argparse
 import json
 import re
 import sys
+import time
 
 try:
     import requests
     from bs4 import BeautifulSoup
 except ImportError:
-    print(json.dumps([]))
-    print("Missing deps: pip install requests beautifulsoup4", file=sys.stderr)
-    sys.exit(1)
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
-# ── PublicSurplus category map ─────────────────────────────────────────────────
-# catid values scraped from https://www.publicsurplus.com/sms/browse/allcat
-_PS_CAT = {
-    "tools":         [1009, 619],        # Building/Tools, Industrial/Tools
-    "laptop":        [106],              # Computers/Notebooks
-    "computer":      [101, 103, 106],    # Computers/General, PC Systems, Notebooks
-    "electronics":   [201, 2],           # Electronics/General, Electronics
-    "generator":     [616],              # Industrial/Power Plant
-    "furniture":     [1401, 301],        # Furniture/General, Office/General
-    "medical":       [2308, 612, 2301],  # Medical/General, Industrial/Medical, Lab
-    "hvac":          [1004, 1003],       # Building/A/C, Building/Heating
-    "treadmill":     [503],              # Sporting Goods/Exercise
-    "exercise":      [503],              # Sporting Goods/Exercise
-    "guitar":        [1301, 1302],       # Music/General, Music/Orchestra
-    "piano":         [1303],             # Music/Pianos
-    "music":         [1301],             # Music/General
-    "mower":         [1203],             # Outdoor/Lawn and Garden
-    "lawn":          [1203],             # Outdoor/Lawn and Garden
-    "floor scrubber":[601, 912],         # Industrial/General, School/Janitorial
-    "janitorial":    [912, 601],         # School/Janitorial, Industrial/General
-    "forklift":      [1717],             # Heavy Equipment/Forklifts
-    "truck":         [404, 1714],        # Motor Pool/Truck, Heavy Equip/Trucks
-    "vehicle":       [403, 404, 405],    # Motor Pool/Auto, Truck, SUV
-    "office":        [301, 303, 302],    # Office/General, Desks, Chairs
-    "phone":         [207],              # Electronics/Phones
-    "appliance":     [208],              # Electronics/Appliances
-}
+    sys.exit("Missing deps: pip install requests beautifulsoup4")
 
 
-def _ps_catids_for_keyword(keywords: str) -> list[int]:
-    """Return up to 2 category IDs for the given keyword string."""
-    kw = keywords.lower().strip()
-    # exact match first
-    if kw in _PS_CAT:
-        return _PS_CAT[kw][:2]
-    # partial match
-    for key, ids in _PS_CAT.items():
-        if key in kw or kw in key:
-            return ids[:2]
-    return []
+# ── PublicSurplus scraper ──────────────────────────────────────────────────────
 
+def scrape_publicsurplus(zip_code: str, radius: int, hours: int, max_listings: int) -> list[dict]:
+    """Scrape PublicSurplus for listings closing within `hours` hours near zip_code."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        sys.exit("Missing dep: pip install playwright && python -m playwright install chromium")
 
-def _ps_scrape_url(page, url) -> list[dict]:
-    """Load a PublicSurplus search URL and extract auction cards."""
-    page.goto(url, wait_until="networkidle", timeout=30000)
-    page.wait_for_timeout(2000)
-    return page.eval_on_selector_all(
-        "a[href*='/auction/view']",
-        """els => els.map(e => {
-            const card = e.closest('.auction-item, .ps-card, .card, li, tr') || e.parentElement;
-            const cardText = card ? card.innerText : '';
-            const priceMatch = cardText.match(/\\$[\\d,]+(?:\\.\\d{2})?/);
-            const lines = cardText.split('\\n').map(l => l.trim()).filter(Boolean);
-            return {
-                href: e.getAttribute('href'),
-                text: (e.innerText || e.textContent || '').trim(),
-                price: priceMatch ? priceMatch[0] : '',
-                details: lines.slice(0, 6).join(' | ')
-            };
-        })"""
-    )
+    listings = []
+    seen = set()
 
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
 
-def _ps_build_results(items, max_results, seen, location_label):
-    results = []
+        # Search all categories, sorted by time left, closing within hours
+        url = (
+            "https://www.publicsurplus.com/sms/browse/search"
+            f"?posting=y&page=1&sortBy=timeLeft"
+            f"&endHours={hours}&startHours=-1"
+            f"&lowerPrice=&higherPrice="
+            f"&milesLocation={radius}&zipCode={zip_code}"
+            f"&region=&search=Search"
+        )
+        print(f"Scraping PublicSurplus: {url}", file=sys.stderr)
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        page.wait_for_timeout(2000)
+
+        items = page.eval_on_selector_all(
+            "a[href*='/auction/view']",
+            """els => els.map(e => {
+                const card = e.closest('.auction-item, .ps-card, .card, li, tr') || e.parentElement;
+                const cardText = card ? card.innerText : '';
+                const priceMatch = cardText.match(/\\$[\\d,]+(?:\\.\\d{2})?/);
+                const lines = cardText.split('\\n').map(l => l.trim()).filter(Boolean);
+                return {
+                    href: e.getAttribute('href'),
+                    text: (e.innerText || e.textContent || '').trim(),
+                    price: priceMatch ? priceMatch[0] : '',
+                    card_lines: lines
+                };
+            })"""
+        )
+
+        browser.close()
+
     for item in items:
         href = item.get("href", "")
-        title = item.get("text", "").strip()
-        price = item.get("price", "")
-        details = item.get("details", "")
         if not href or "/auction/view" not in href:
             continue
         full_url = "https://www.publicsurplus.com" + href if not href.startswith("http") else href
@@ -107,172 +80,72 @@ def _ps_build_results(items, max_results, seen, location_label):
         if key in seen:
             continue
         seen.add(key)
-        # Extract real item name from details string "AZ | #ID - ITEM NAME | Price: ..."
-        name_match = re.search(r"#\d+ - (.+?) \|", details)
-        if name_match:
-            title = name_match.group(1).strip().title()
-        elif len(title) < 4:
-            title = f"Auction {key}"
-        results.append({
-            "url": full_url,
+
+        card_lines = item.get("card_lines", [])
+        card_text = " | ".join(card_lines[:8])
+
+        # Extract title from card
+        name_match = re.search(r"#\d+ - (.+?)(?:\s*\||\s*$)", card_text)
+        title = name_match.group(1).strip().title() if name_match else item.get("text", "").strip()
+        if not title or len(title) < 3:
+            continue
+
+        # Extract price
+        price_str = item.get("price", "")
+        price_match = re.search(r"\$([\d,]+(?:\.\d{2})?)", price_str)
+        price = float(price_match.group(1).replace(",", "")) if price_match else 0.0
+
+        # Extract time remaining
+        time_match = re.search(r"(\d+)\s*(?:hour|hr|day|min)", card_text, re.I)
+        time_left = ""
+        for line in card_lines:
+            if re.search(r"hour|day|min", line, re.I) and re.search(r"\d+", line):
+                time_left = line.strip()
+                break
+
+        # Extract location/category from card
+        location = ""
+        for line in card_lines:
+            if re.match(r"^[A-Z]{2}$", line.strip()):
+                location = line.strip()
+                break
+
+        # Extract number of bids
+        bids = 0
+        for line in card_lines:
+            bm = re.search(r"(\d+)\s*bid", line, re.I)
+            if bm:
+                bids = int(bm.group(1))
+                break
+
+        listings.append({
+            "id": key,
             "title": title,
-            "current_bid": price,
-            "location": location_label,
-            "details": details,
-            "site": "publicsurplus",
+            "url": full_url,
+            "price": price,
+            "price_str": price_str or f"${price:.2f}",
+            "time_left": time_left,
+            "bids": bids,
+            "location": location,
+            "card_text": card_text,
         })
-        if len(results) >= max_results:
-            break
-    return results
 
-
-def search_publicsurplus(keywords: str, zip_code: str, radius: int, max_results: int) -> list[dict]:
-    """Browse PublicSurplus Arizona state category pages with Playwright, filter by keyword."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("Playwright not installed: pip install playwright && python -m playwright install chromium", file=sys.stderr)
-        return []
-
-    catids = _ps_catids_for_keyword(keywords)
-    if not catids:
-        print(f"PublicSurplus: no category mapping for '{keywords}'", file=sys.stderr)
-        return []
-
-    kw_words = [w.lower() for w in re.split(r"\W+", keywords) if len(w) > 2]
-    seen = set()
-    results = []
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-
-            for catid in catids:
-                if len(results) >= max_results:
-                    break
-
-                page = browser.new_page()
-                # Browse Arizona-specific category page
-                url = f"https://www.publicsurplus.com/sms/all,az/browse/cataucs?catid={catid}"
-                items = _ps_scrape_url(page, url)
-                page.close()
-
-                az_results = _ps_build_results(items, max_results - len(results), seen, "Arizona")
-                results.extend(az_results)
-
-            # If nothing in AZ, try nationwide for same categories
-            if not results:
-                print(f"PublicSurplus: no AZ results, checking nationwide for '{keywords}'", file=sys.stderr)
-                for catid in catids:
-                    if len(results) >= max_results:
-                        break
-                    page = browser.new_page()
-                    url = f"https://www.publicsurplus.com/sms/browse/cataucs?catid={catid}"
-                    items = _ps_scrape_url(page, url)
-                    page.close()
-                    results.extend(_ps_build_results(items, max_results - len(results), seen, "nationwide"))
-
-            browser.close()
-
-    except Exception as e:
-        print(f"PublicSurplus error: {e}", file=sys.stderr)
-        return []
-
-    if not results:
-        print(f"PublicSurplus: 0 results for '{keywords}'", file=sys.stderr)
-    return results
-
-
-# ── Iron Planet ────────────────────────────────────────────────────────────────
-
-_IP_CATEGORY_MAP = [
-    (["generator", "power equipment", "genset"],         "/Generators+and+Power+Equipment"),
-    (["truck", "trailer", "pickup"],                      "/Trucks+%26+Trailers"),
-    (["forklift", "warehouse", "pallet"],                 "/Forklifts+and+Warehouse+Equipment"),
-    (["mower", "tractor", "farm", "lawn", "garden"],      "/Agriculture"),
-    (["crane"],                                            "/Cranes"),
-    (["excavator", "dozer", "loader", "skid steer"],      "/Construction"),
-]
-
-_IP_SKIP = {"laptop", "computer", "notebook", "phone", "tablet",
-             "furniture", "chair", "desk", "couch", "sofa",
-             "guitar", "piano", "violin", "drum",
-             "treadmill", "dumbbell", "weights"}
-
-_ITEM_RE = re.compile(r"^/for-sale/[^/?#]+/\d+")
-
-
-def _ip_parse_items(soup, max_results, filter_words=None):
-    results = []
-    seen = set()
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if not _ITEM_RE.match(href):
-            continue
-        clean = "https://www.ironplanet.com" + href.split("?")[0]
-        if clean in seen:
-            continue
-        seen.add(clean)
-        title = a.get_text(strip=True)
-        if len(title) < 6:
-            slug = href.split("?")[0].rsplit("/", 2)[-2]
-            title = re.sub(r"-?%28.*?%29-?", " ", slug).replace("-", " ").strip()
-        if len(title) <= 5:
-            continue
-        if filter_words and not any(w in title.lower() for w in filter_words):
-            continue
-        results.append({"url": clean, "title": title, "site": "ironplanet"})
-        if len(results) >= max_results:
-            break
-    return results
-
-
-def search_ironplanet(keywords: str, max_results: int) -> list[dict]:
-    kw_split = set(re.split(r"\W+", keywords.lower()))
-    if kw_split & _IP_SKIP:
-        return []
-
-    kw = keywords.lower()
-    kw_words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
-
-    category_path = None
-    for terms, path in _IP_CATEGORY_MAP:
-        if any(t in kw for t in terms):
-            category_path = path
+        if len(listings) >= max_listings:
             break
 
-    if category_path:
-        try:
-            r = requests.get("https://www.ironplanet.com" + category_path, headers=HEADERS, timeout=20)
-            r.raise_for_status()
-            results = _ip_parse_items(BeautifulSoup(r.text, "html.parser"), max_results)
-            if results:
-                return results
-        except Exception as e:
-            print(f"Iron Planet category error: {e}", file=sys.stderr)
-
-    try:
-        r = requests.get("https://www.ironplanet.com/jsp/s/search.ips",
-                         params={"kw": keywords}, headers=HEADERS, timeout=20)
-        r.raise_for_status()
-        results = _ip_parse_items(BeautifulSoup(r.text, "html.parser"), max_results, filter_words=kw_words)
-        if results:
-            return results
-    except Exception as e:
-        print(f"Iron Planet search error: {e}", file=sys.stderr)
-
-    print(f"Iron Planet: 0 results for '{keywords}'", file=sys.stderr)
-    return []
+    print(f"Found {len(listings)} listings closing within {hours}h near {zip_code}", file=sys.stderr)
+    return listings
 
 
-# ── eBay resale value ──────────────────────────────────────────────────────────
+# ── eBay sold comps ────────────────────────────────────────────────────────────
 
-def get_ebay_resale_value(title: str) -> str:
-    """Scrape eBay sold listings using Playwright to get real resale prices."""
-    words = [w for w in re.split(r"\W+", title) if len(w) > 2][:5]
+def get_ebay_comps(title: str) -> dict:
+    """Get sold listing prices from eBay for the given title."""
+    words = [w for w in re.split(r"\W+", title) if len(w) > 2][:6]
     query = " ".join(words)
     if not query:
-        return "unknown"
+        return {"prices": [], "avg": 0, "count": 0, "query": query}
+
     try:
         from playwright.sync_api import sync_playwright
         from urllib.parse import quote_plus
@@ -280,92 +153,181 @@ def get_ebay_resale_value(title: str) -> str:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
             page.goto(url, wait_until="load", timeout=30000)
             try:
-                page.wait_for_selector(".s-item__price", timeout=10000)
+                page.wait_for_selector(".s-item__price", timeout=8000)
             except Exception:
                 pass
-            prices = page.eval_on_selector_all(
+            prices_raw = page.eval_on_selector_all(
                 ".s-item__price",
                 "els => els.map(e => e.innerText.trim())"
             )
             browser.close()
-        parsed = []
-        for text in prices:
+
+        prices = []
+        for text in prices_raw:
             m = re.search(r"\$([\d,]+(?:\.\d{2})?)", text)
             if m:
                 try:
                     val = float(m.group(1).replace(",", ""))
                     if 0.99 < val < 50000:
-                        parsed.append(val)
+                        prices.append(val)
                 except ValueError:
                     pass
-        if not parsed:
-            return "no sold listings found"
-        parsed.sort()
-        median = parsed[len(parsed) // 2]
-        low = parsed[0]
-        high = parsed[-1]
-        return f"${median:,.0f} median (${low:,.0f}–${high:,.0f} range, {len(parsed)} sold)"
+
+        if not prices:
+            return {"prices": [], "avg": 0, "count": 0, "query": query}
+
+        prices.sort()
+        avg = sum(prices) / len(prices)
+        median = prices[len(prices) // 2]
+        return {
+            "prices": prices,
+            "avg": round(avg, 2),
+            "median": round(median, 2),
+            "low": prices[0],
+            "high": prices[-1],
+            "count": len(prices),
+            "query": query,
+        }
     except Exception as e:
-        return f"lookup failed: {e}"
+        print(f"eBay lookup failed for '{title}': {e}", file=sys.stderr)
+        return {"prices": [], "avg": 0, "count": 0, "query": query}
+
+
+# ── Deal analysis ──────────────────────────────────────────────────────────────
+
+def analyze_deals(listings: list[dict], min_ratio: float) -> list[dict]:
+    deals = []
+    total = len(listings)
+    for i, listing in enumerate(listings):
+        title = listing["title"]
+        price = listing["price"]
+        if price <= 0:
+            continue
+
+        print(f"[{i+1}/{total}] Checking eBay comps: {title}", file=sys.stderr)
+        comps = get_ebay_comps(title)
+
+        if comps["count"] == 0:
+            continue
+
+        # Use conservative estimate: lower of avg and median
+        resale = min(comps["avg"], comps.get("median", comps["avg"]))
+        # Reduce by 30% if listed as as-is/untested
+        risk_flags = []
+        card_lower = listing.get("card_text", "").lower()
+        if any(w in card_lower for w in ["as-is", "as is", "untested", "for parts", "unknown condition", "non-working"]):
+            resale *= 0.70
+            risk_flags.append("AS-IS / Condition risk (-30% applied)")
+
+        profit_ratio = resale / price if price > 0 else 0
+
+        if profit_ratio < min_ratio:
+            continue
+
+        confidence = "HIGH" if comps["count"] >= 5 else ("MED" if comps["count"] >= 3 else "LOW")
+        est_profit = resale - price
+
+        deals.append({
+            **listing,
+            "ebay_avg": comps["avg"],
+            "ebay_median": comps.get("median", 0),
+            "ebay_low": comps.get("low", 0),
+            "ebay_high": comps.get("high", 0),
+            "ebay_count": comps["count"],
+            "ebay_query": comps["query"],
+            "resale_estimate": round(resale, 2),
+            "profit_ratio": round(profit_ratio, 2),
+            "est_profit": round(est_profit, 2),
+            "confidence": confidence,
+            "risk_flags": risk_flags,
+        })
+
+    deals.sort(key=lambda x: x["profit_ratio"], reverse=True)
+    return deals
+
+
+# ── Output formatting ──────────────────────────────────────────────────────────
+
+def format_deals(deals: list[dict]) -> str:
+    if not deals:
+        return "No deals found meeting the 1.8x profit ratio threshold.\n"
+
+    lines = []
+    for i, d in enumerate(deals, 1):
+        risk_str = ", ".join(d["risk_flags"]) if d["risk_flags"] else "None"
+        recommend = "BUY" if d["profit_ratio"] >= 2.5 and d["confidence"] != "LOW" else (
+                    "WATCH" if d["profit_ratio"] >= 1.8 else "SKIP")
+        lines.append(f"""
+--- DEAL #{i} ---
+TITLE:           {d['title']}
+URL:             {d['url']}
+CURRENT PRICE:   {d['price_str']}
+TIME REMAINING:  {d['time_left']}
+BIDS:            {d['bids']}
+LOCATION:        {d.get('location', 'AZ')}
+
+RESALE COMPS (eBay sold — "{d['ebay_query']}"):
+  Avg:    ${d['ebay_avg']:,.0f}
+  Median: ${d['ebay_median']:,.0f}
+  Range:  ${d['ebay_low']:,.0f} – ${d['ebay_high']:,.0f}
+  Comps:  {d['ebay_count']} sold listings
+  Est. quick-sale value: ${d['resale_estimate']:,.0f}
+
+PROFIT RATIO:    {d['profit_ratio']:.1f}x
+EST. PROFIT:     ${d['est_profit']:,.0f}
+CONFIDENCE:      {d['confidence']}
+RISK FLAGS:      {risk_str}
+RECOMMENDATION:  {recommend}
+""")
+
+    # Summary table
+    lines.append("\n" + "="*80)
+    lines.append("SUMMARY TABLE")
+    lines.append("="*80)
+    lines.append(f"{'Rank':<5} {'Item':<35} {'Price':>8} {'Resale':>8} {'Ratio':>7} {'Time Left':<20} {'Risk'}")
+    lines.append("-"*90)
+    for i, d in enumerate(deals, 1):
+        risk = "⚠ " + d["risk_flags"][0][:20] if d["risk_flags"] else "Low"
+        lines.append(
+            f"{i:<5} {d['title'][:34]:<35} {d['price_str']:>8} "
+            f"${d['resale_estimate']:>7,.0f} {d['profit_ratio']:>6.1f}x  {d['time_left'][:18]:<20} {risk}"
+        )
+
+    # Top pick
+    if deals:
+        top = deals[0]
+        lines.append(f"\nTOP PICK: {top['title']}")
+        lines.append(f"  Bid ${top['price']:.0f}, resells for ~${top['resale_estimate']:.0f} — {top['profit_ratio']:.1f}x return. {top['url']}")
+
+    return "\n".join(lines)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--state",    required=True)
-    p.add_argument("--zip",      default="85001")
-    p.add_argument("--radius",   type=int, default=100)
-    p.add_argument("--category", default="")
-    p.add_argument("--keywords", default="")
-    p.add_argument("--max",      type=int, default=5)
-    p.add_argument("--all-categories", action="store_true", help="Search all known categories and return top deals")
+    p.add_argument("--zip",       default="85260", help="ZIP code (default: 85260 Scottsdale AZ)")
+    p.add_argument("--radius",    type=int, default=100)
+    p.add_argument("--hours",     type=int, default=24, help="Max hours until closing")
+    p.add_argument("--min-ratio", type=float, default=1.8, help="Min profit ratio (default 1.8)")
+    p.add_argument("--max",       type=int, default=50, help="Max listings to scrape")
+    p.add_argument("--json",      action="store_true", help="Output raw JSON instead of formatted text")
     args = p.parse_args()
 
-    if args.all_categories:
-        all_keywords = list(_PS_CAT.keys())
-        term = None
+    listings = scrape_publicsurplus(args.zip, args.radius, args.hours, args.max)
+    if not listings:
+        print("No listings found. Check your zip/radius/hours settings.")
+        sys.exit(0)
+
+    print(f"\nAnalyzing {len(listings)} listings for {args.min_ratio}x profit deals...\n", file=sys.stderr)
+    deals = analyze_deals(listings, args.min_ratio)
+
+    if args.json:
+        print(json.dumps(deals, indent=2))
     else:
-        term = args.keywords or args.category
-        if not term:
-            print("Provide --keywords or --category, or use --all-categories", file=sys.stderr)
-            sys.exit(1)
-        all_keywords = [term]
-
-    # Fetch a larger pool to rank by profit potential
-    pool_size = max(args.max * 4, 20)
-    candidates = []
-    for kw in all_keywords:
-        candidates += search_publicsurplus(kw, args.zip, args.radius, pool_size // len(all_keywords) + 2)
-    if term:
-        candidates += search_ironplanet(term, pool_size)
-
-    # Score each item by profit potential
-    scored = []
-    for r in candidates:
-        ebay_str = get_ebay_resale_value(r["title"])
-        r["ebay_resale_value"] = ebay_str
-
-        # Parse current bid
-        bid_match = re.search(r"\$([\d,]+(?:\.\d{2})?)", r.get("current_bid", ""))
-        bid = float(bid_match.group(1).replace(",", "")) if bid_match else 0.0
-
-        # Parse eBay median
-        ebay_match = re.search(r"\$([\d,]+(?:\.\d{2})?)", ebay_str)
-        ebay_median = float(ebay_match.group(1).replace(",", "")) if ebay_match else 0.0
-
-        profit = ebay_median - bid
-        r["estimated_profit"] = f"${profit:,.0f}" if ebay_median > 0 else "unknown"
-        scored.append((profit, r))
-
-    # Sort by profit descending, return top N
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = [r for _, r in scored[:args.max]]
-
-    print(json.dumps(top, indent=2))
+        print(format_deals(deals))
 
 
 if __name__ == "__main__":
