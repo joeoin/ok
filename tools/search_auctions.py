@@ -179,8 +179,8 @@ def get_fb_comps(title: str) -> dict:
             page.wait_for_selector("input[name='email']", timeout=10000)
             page.fill("input[name='email']", email)
             page.fill("input[name='pass']", password)
-            page.click("button[name='login']")
-            page.wait_for_timeout(4000)
+            page.press("input[name='pass']", "Enter")
+            page.wait_for_timeout(5000)
 
             if "login" in page.url or "checkpoint" in page.url:
                 print("FB login failed", file=sys.stderr)
