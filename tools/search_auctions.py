@@ -2,7 +2,7 @@
 """
 PublicSurplus deal-finder agent.
 
-Scrapes listings closing within 24 hours near zip 85260 (100mi radius),
+Scrapes listings closing within 72 hours near zip 85001 (100mi radius),
 looks up eBay sold comps, and surfaces only deals with profit_ratio >= 1.8x.
 
 Usage:
@@ -398,9 +398,9 @@ RECOMMENDATION:  {recommend}
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--zip",       default="85260", help="ZIP code (default: 85260 Scottsdale AZ)")
+    p.add_argument("--zip",       default="85001", help="ZIP code (default: 85001 Phoenix AZ)")
     p.add_argument("--radius",    type=int, default=100)
-    p.add_argument("--hours",     type=int, default=24, help="Max hours until closing")
+    p.add_argument("--hours",     type=int, default=72, help="Max hours until closing (default 72)")
     p.add_argument("--min-ratio",  type=float, default=1.8,  help="Min profit ratio (default 1.8)")
     p.add_argument("--min-profit", type=float, default=100.0, help="Min dollar profit (default $100)")
     p.add_argument("--max",        type=int,   default=50,   help="Max listings to scrape")
