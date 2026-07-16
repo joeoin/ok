@@ -42,7 +42,7 @@ describe('computeReliability', () => {
       ads,
       groups,
       advertiserConfidencePct: 99,
-      estimatedPopulation: 678,
+      metaReportedApprox: 678,
       dataSource: 'Official Meta Ad Library API (thin fields)',
       analysisEnabled: false,
     });
@@ -77,7 +77,7 @@ describe('computeReliability', () => {
       ads,
       groups,
       advertiserConfidencePct: 100,
-      estimatedPopulation: 10,
+      metaReportedApprox: 10,
       dataSource: 'Scraper (full creative)',
       analysisEnabled: true,
     });
@@ -90,15 +90,25 @@ describe('computeReliability', () => {
   it('drops overall when the advertiser confidence is low', () => {
     const ads = [analyzed(ad({ adArchiveId: '1', headline: 'H', adText: 'b', ctaText: 'x', landingPageUrl: 'y', platforms: ['facebook'], startDate: '2026-06-01', assets: [{ type: 'image', url: 'u', previewUrl: null, localPath: null }] }))];
     const groups = groupCreatives(ads);
-    const low = computeReliability({ ads, groups, advertiserConfidencePct: 72, estimatedPopulation: 1, dataSource: 's', analysisEnabled: true });
-    const high = computeReliability({ ads, groups, advertiserConfidencePct: 100, estimatedPopulation: 1, dataSource: 's', analysisEnabled: true });
+    const low = computeReliability({ ads, groups, advertiserConfidencePct: 72, metaReportedApprox: 1, dataSource: 's', analysisEnabled: true });
+    const high = computeReliability({ ads, groups, advertiserConfidencePct: 100, metaReportedApprox: 1, dataSource: 's', analysisEnabled: true });
     expect(high.overall).toBeGreaterThan(low.overall);
   });
 
-  it('reports coverage as not-measurable when population is unknown', () => {
+  it('reports coverage as not-measurable when Meta\'s figure is unknown, and never uses the API estimate', () => {
     const ads = [analyzed(ad({ adArchiveId: '1', headline: 'H' }))];
     const groups = groupCreatives(ads);
-    const r = computeReliability({ ads, groups, advertiserConfidencePct: 100, estimatedPopulation: null, dataSource: 's', analysisEnabled: false });
-    expect(r.missingDataExplanations.join(' ')).toMatch(/population size is not exposed/);
+    const r = computeReliability({ ads, groups, advertiserConfidencePct: 100, metaReportedApprox: null, dataSource: 's', analysisEnabled: false });
+    const notes = r.missingDataExplanations.join(' ');
+    expect(notes).toMatch(/coverage cannot be measured/);
+    expect(notes).toMatch(/estimated_total_count is intentionally not used/);
+  });
+
+  it('computes coverage against Meta\'s reported figure and attributes it', () => {
+    const ads = Array.from({ length: 5 }, (_, i) => analyzed(ad({ adArchiveId: String(i), headline: 'H' + i })));
+    const groups = groupCreatives(ads);
+    const r = computeReliability({ ads, groups, advertiserConfidencePct: 100, metaReportedApprox: 10, dataSource: 's', analysisEnabled: false });
+    expect(r.coverage).toBe(50); // 5 of Meta's ~10
+    expect(r.missingDataExplanations.join(' ')).toMatch(/Ad Library UI reports ≈10 results/);
   });
 });

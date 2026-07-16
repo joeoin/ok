@@ -96,14 +96,23 @@ export async function runResearch(
     const aggregates = computeAggregates(creativeGroups);
     log.info(`Collapsed ${analyzedAds.length} ads → ${creativeGroups.length} unique creatives`);
 
+    // Verifiable ad-volume figures. metaReportedApprox is Meta's OWN UI count
+    // (scraped), never the API's unverifiable estimated_total_count.
+    const metaReportedApprox = scraper.lastReportedResultCount;
+    const adVolume = {
+      collectedAds: analyzedAds.length,
+      uniqueCreatives: creativeGroups.length,
+      metaReportedApprox,
+      fullyCollected: metaReportedApprox !== null && analyzedAds.length >= metaReportedApprox,
+    };
+
     // Step 6 — executive briefing from deduplicated creatives.
-    const estimatedActiveAds = scraper.lastEstimatedTotal ?? null;
     const { report, error: reportError } = await generateCompanyReport(
       llm,
       advertiser,
       creativeGroups,
       aggregates,
-      estimatedActiveAds,
+      metaReportedApprox,
     );
 
     // Step 7 — reliability scoring.
@@ -111,7 +120,7 @@ export async function runResearch(
       ads: analyzedAds,
       groups: creativeGroups,
       advertiserConfidencePct: resolution.confidencePct,
-      estimatedPopulation: estimatedActiveAds,
+      metaReportedApprox,
       dataSource: 'Meta Ad Library — browser scraper (public data only)',
       analysisEnabled: config.llm.provider !== 'none',
     });
@@ -127,7 +136,7 @@ export async function runResearch(
       reportError,
       reliability,
       advertiserResolution: resolution,
-      estimatedActiveAds,
+      adVolume,
     };
 
     // Persist the resolution so future runs skip the ambiguity.

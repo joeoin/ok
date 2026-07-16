@@ -17,13 +17,27 @@ export interface ScraperOptions {
   scrollIdleMs: number;
 }
 
+/**
+ * Parse the Ad Library UI's own result-count text ("~370 results", "About
+ * 1,234 results", "1 result") into a number. Returns null if no count is
+ * present. This is Meta's own displayed figure — the only population reference
+ * we trust — NOT the API's estimated_total_count.
+ */
+export function parseReportedResultCount(text: string): number | null {
+  const m = text.match(/(?:~|about\s+)?\s*([\d][\d,]{0,11})\s+results?\b/i);
+  if (!m) return null;
+  const n = Number.parseInt((m[1] as string).replace(/,/g, ''), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
 export class AdLibraryScraper {
   /**
-   * Estimated total active ads for the advertiser, when the page exposes a
-   * result count. Null when unknown — reliability scoring treats null coverage
-   * honestly (as not-measurable) rather than fabricating a number.
+   * Meta's own approximate result count, read from the Ad Library UI during
+   * collection ("~370 results"). Null when it could not be read. Reliability
+   * scoring treats null coverage honestly (not-measurable) rather than
+   * fabricating a number, and the API's estimated_total_count is never used.
    */
-  lastEstimatedTotal: number | null = null;
+  lastReportedResultCount: number | null = null;
 
   constructor(
     private readonly browser: BrowserManager,
@@ -91,6 +105,13 @@ export class AdLibraryScraper {
     await this.dismissCookieDialog(page);
     await sleep(3000);
 
+    // Read Meta's own "~N results" figure from the UI (the only population
+    // reference we trust). Best-effort; null if the layout doesn't expose it.
+    this.lastReportedResultCount = await this.readReportedResultCount(page);
+    if (this.lastReportedResultCount !== null) {
+      log.info(`Meta Ad Library reports ~${this.lastReportedResultCount} results for this page`);
+    }
+
     const collected = new Map<string, AdRecord>();
     const absorb = () => {
       for (const ad of extractAds(capture.drain(), this.options.country)) {
@@ -127,6 +148,18 @@ export class AdLibraryScraper {
     log.info(`Collected ${ads.length} ads for ${advertiser.name}`);
     // The page stays open so the caller can take per-ad screenshots.
     return { ads, page };
+  }
+
+  /** Read Meta's "~N results" figure from the Ad Library UI. null on failure. */
+  private async readReportedResultCount(page: Page): Promise<number | null> {
+    try {
+      const el = page.getByText(/\bresults?\b/i).first();
+      if ((await el.count()) === 0) return null;
+      const text = (await el.innerText({ timeout: 3000 })).slice(0, 200);
+      return parseReportedResultCount(text);
+    } catch {
+      return null;
+    }
   }
 
   /**

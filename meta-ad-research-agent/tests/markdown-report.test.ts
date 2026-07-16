@@ -6,18 +6,19 @@ import { extractAds } from '../src/parser/ad-parser.js';
 import { legacyPayload } from './fixtures.js';
 import type { CompanyReport, ResearchResult } from '../src/types.js';
 
-function makeResult(overrides: Partial<ResearchResult> = {}): ResearchResult {
+function makeResult(overrides: Partial<ResearchResult> = {}, metaReportedApprox: number | null = 3): ResearchResult {
   const ads = extractAds([legacyPayload], 'US').map((ad) => ({
     ad,
     analysis: null,
     analysisError: 'Analysis disabled (LLM_PROVIDER=none)',
   }));
   const creativeGroups = groupCreatives(ads, { asOf: '2026-07-16T00:00:00.000Z' });
+  // Keep reliability and adVolume consistent with the same Meta figure.
   const reliability = computeReliability({
     ads,
     groups: creativeGroups,
     advertiserConfidencePct: 99,
-    estimatedPopulation: 3,
+    metaReportedApprox,
     dataSource: 'Meta Ad Library — browser scraper (public data only)',
     analysisEnabled: false,
   });
@@ -40,7 +41,7 @@ function makeResult(overrides: Partial<ResearchResult> = {}): ResearchResult {
     reportError: 'Report generation disabled (LLM_PROVIDER=none)',
     reliability,
     advertiserResolution: { confidencePct: 99, method: 'auto-accepted', reasons: ['exact name match'] },
-    estimatedActiveAds: 3,
+    adVolume: { collectedAds: ads.length, uniqueCreatives: creativeGroups.length, metaReportedApprox, fullyCollected: false },
     ...overrides,
   };
 }
@@ -68,12 +69,22 @@ describe('renderMarkdownReport', () => {
     expect(md).toContain('# Competitive Intelligence Briefing: Acme Solar');
     expect(md).toContain('## Reliability');
     expect(md).toContain('Overall confidence');
-    expect(md).toMatch(/ads → 1 unique creatives/);
+    expect(md).toMatch(/ads collected → 1 unique creatives/);
+    // Meta's figure is attributed and marked approximate; API estimate never shown.
+    expect(md).toContain("Meta's Ad Library UI reports **≈3 results**");
+    expect(md).toContain('verified by direct count');
     expect(md).toContain('_AI narrative not generated_');
     // Constraint: never invent private metrics.
     expect(md).toContain('are not exposed and are never estimated');
     // Honest missing-data explanation present.
     expect(md).toContain('What limits this report');
+  });
+
+  it('claims no total when Meta\'s figure was not captured', () => {
+    const md = renderMarkdownReport(makeResult({}, null));
+    expect(md).toContain('not verifiable');
+    expect(md).not.toMatch(/≈\d+ results/);
+    expect(md).toMatch(/API's estimate is unreliable/);
   });
 
   it('renders all 14 executive-briefing sections in order when a report exists', () => {

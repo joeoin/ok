@@ -14,8 +14,12 @@ export interface ReliabilityInput {
   groups: CreativeGroup[];
   /** Confidence the advertiser was correctly identified (0–100). */
   advertiserConfidencePct: number;
-  /** Estimated active-ad population from discovery; null if not exposed. */
-  estimatedPopulation: number | null;
+  /**
+   * Meta's OWN approximate result count from the Ad Library UI ("~370"), or
+   * null when it wasn't captured. The API's estimated_total_count must never
+   * be passed here — it over-counts and is unverifiable.
+   */
+  metaReportedApprox: number | null;
   dataSource: string;
   analysisEnabled: boolean;
 }
@@ -35,7 +39,7 @@ const COMPLETENESS_FIELDS: Array<{ key: string; has: (a: AnalyzedAd['ad']) => bo
 const clamp = (n: number): number => Math.max(0, Math.min(100, Math.round(n)));
 
 export function computeReliability(input: ReliabilityInput): ReliabilityScores {
-  const { ads, groups, advertiserConfidencePct, estimatedPopulation, dataSource, analysisEnabled } = input;
+  const { ads, groups, advertiserConfidencePct, metaReportedApprox, dataSource, analysisEnabled } = input;
   const explanations: string[] = [];
 
   // --- data completeness: average fraction of fields present across ads ---
@@ -60,24 +64,24 @@ export function computeReliability(input: ReliabilityInput): ReliabilityScores {
     );
   }
 
-  // --- coverage: collected vs. estimated population ---
+  // --- coverage: collected vs. Meta's OWN reported count (never the API estimate) ---
   const collectedTotal = groups.reduce((n, g) => n + g.duplicateCount, 0);
   let coverage: number;
   let coverageInOverall = true;
-  if (estimatedPopulation && estimatedPopulation > 0) {
-    coverage = clamp((collectedTotal / estimatedPopulation) * 100);
-    if (coverage < 100) {
-      explanations.push(
-        `Collected ${collectedTotal} of ~${estimatedPopulation} active ads ` +
-          `(${coverage}%). The rest were beyond the current page/scroll or API result cap.`,
-      );
-    }
+  if (metaReportedApprox && metaReportedApprox > 0) {
+    coverage = clamp((collectedTotal / metaReportedApprox) * 100);
+    explanations.push(
+      `Collected ${collectedTotal} ads; the Ad Library UI reports ≈${metaReportedApprox} results ` +
+        `for this page (Meta's own approximate figure) → ~${coverage}% coverage. ` +
+        'The remainder was beyond the scroll depth reached.',
+    );
   } else {
-    coverage = 100;
+    coverage = 0;
     coverageInOverall = false;
     explanations.push(
-      'Active-ad population size is not exposed, so coverage cannot be measured; ' +
-        'treat the collected set as a recent sample, not the full population.',
+      "Meta's reported result count was not captured, so coverage cannot be measured; " +
+        'treat the collected set as a recent sample, not the full population. ' +
+        "(The API's estimated_total_count is intentionally not used — it over-counts and is unverifiable.)",
     );
   }
 
@@ -115,6 +119,7 @@ export function computeReliability(input: ReliabilityInput): ReliabilityScores {
     advertiserConfidence: clamp(advertiserConfidencePct),
     dataCompleteness,
     coverage,
+    coverageMeasured: coverageInOverall,
     creativeCoverage,
     missingDataExplanations: explanations,
     dataSource,

@@ -7,17 +7,17 @@
 
 | Signal | Score |
 | --- | --- |
-| **Overall confidence** | **50/100** |
+| **Overall confidence** | **58/100** |
 | Advertiser confidence | 99/100 (user-selected) |
 | Data completeness | 38/100 |
-| Coverage | 8/100 |
+| Coverage | Not measured |
 | Creative coverage | 0/100 |
 | Data source | Official Meta Ad Library API (thin fields; body copy/CTA/media not exposed) |
 
 **What limits this report:**
 
 - Fields not exposed by the data source for (nearly) all ads: primary text, description, CTA, landing page, creative asset. These require full-creative capture via the browser scraper.
-- Collected 55 of ~678 active ads (8%). The rest were beyond the current page/scroll or API result cap.
+- Meta's reported result count was not captured, so coverage cannot be measured; treat the collected set as a recent sample, not the full population. (The API's estimated_total_count is intentionally not used — it over-counts and is unverifiable.)
 - 12 of 12 creatives have no downloadable image/video or screenshot (asset URLs not exposed, or capture was blocked).
 - AI analysis was disabled (LLM_PROVIDER=none); strategic fields are unpopulated.
 - Advertiser identified with 99% confidence (see resolution reasons).
@@ -25,7 +25,9 @@
 
 ## At a Glance
 
-**55 ads → 12 unique creatives.**
+**55 ads collected → 12 unique creatives.** (Both counts verified by direct count of what was collected.)
+
+_Total active-ad count: not verifiable._ Meta's UI figure wasn't captured this run, and the Ad Library API's estimate is unreliable, so no total is claimed — only the counts above, which we verified directly.
 
 **Top creative:** "Get Healthcare Support — Covered by Medicare" — 23 duplicate ads, ~5 days running. Duplication + longevity make this the advertiser's most-backed message.
 

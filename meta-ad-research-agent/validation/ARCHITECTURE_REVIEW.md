@@ -31,7 +31,7 @@ The pipeline is a clean linear flow with clear seams: resolve → collect → as
 | 2 | CSV/JSON/Markdown were per-ad-ID, inflating volume ~50× | High | **Fixed** — everything now keyed on deduplicated Creative Groups. |
 | 3 | Advertiser could be chosen silently at low confidence | Critical | **Fixed** — hard 95/70 gating; refuses below 70%. |
 | 4 | No trust signal surfaced to the customer | High | **Fixed** — Reliability Layer with explained sub-scores. |
-| 5 | `estimated_total_count` treated as meaningful | Med | **Fixed** — never surfaced as a brand metric; coverage uses it only as a denominator with caveats, and reports "not measurable" when absent. |
+| 5 | `estimated_total_count` treated as meaningful (reported 678 vs Meta UI ~370) | High | **Fixed** — the API estimate is never displayed. Ad counts are provenance-typed (`AdVolume`): only our own directly-counted collected/unique figures, plus Meta's *UI-scraped* "~N results" (attributed, approximate). Coverage is computed only against Meta's figure and renders "Not measured" otherwise — never a fabricated number. |
 | 6 | Markdown renderer recomputes aggregates the pipeline already has | Low | **Kept intentionally** — the renderer is pure over `ResearchResult`, so any saved JSON re-renders identically without re-running the pipeline. Recompute cost is negligible (in-memory over ≤ few hundred creatives). |
 | 7 | Per-ad screenshots are sequential | Med (perf) | **Documented** — bounded by `MAX_ADS`; parallelizing needs care (shared page/scroll). Deferred to V1.1 with the scraper-hardening work. |
 | 8 | Network payloads buffered in memory | Low | Acceptable for realistic ad volumes; `NetworkCapture.drain()` clears between absorb cycles. |

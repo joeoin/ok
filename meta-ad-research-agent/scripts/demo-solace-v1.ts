@@ -105,11 +105,15 @@ const ads: AnalyzedAd[] = SOLACE.map(([id, headline, started]) => {
 
 const collectedAt = '2026-07-16T04:10:00.000Z';
 const creativeGroups = groupCreatives(ads, { asOf: collectedAt });
+// This harness used the official API, which does NOT expose Meta's UI result
+// count — and the API's own estimated_total_count (678) is unverifiable and
+// over-counts (the UI shows ~370), so we pass null: no total is claimed.
+const metaReportedApprox: number | null = null;
 const reliability = computeReliability({
   ads,
   groups: creativeGroups,
   advertiserConfidencePct: 99,
-  estimatedPopulation: 678,
+  metaReportedApprox,
   dataSource: 'Official Meta Ad Library API (thin fields; body copy/CTA/media not exposed)',
   analysisEnabled: false,
 });
@@ -125,7 +129,12 @@ const result: ResearchResult = {
   reportError: 'AI narrative disabled in this verification run (no LLM key).',
   reliability,
   advertiserResolution: { confidencePct: 99, method: 'user-selected', reasons: ['exact name match', 'advertiser website matches', 'category matches expected industry'] },
-  estimatedActiveAds: 678,
+  adVolume: {
+    collectedAds: ads.length,
+    uniqueCreatives: creativeGroups.length,
+    metaReportedApprox,
+    fullyCollected: false,
+  },
 };
 
 const here = path.dirname(fileURLToPath(import.meta.url));

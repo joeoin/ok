@@ -21,7 +21,7 @@ export async function writeMarkdownReport(store: AssetStore, result: ResearchRes
 }
 
 export function renderMarkdownReport(result: ResearchResult): string {
-  const { advertiser, creativeGroups, report, reliability } = result;
+  const { advertiser, creativeGroups, report, reliability, adVolume } = result;
   const summary = summarizeCreatives(creativeGroups);
   const agg = computeAggregates(creativeGroups);
 
@@ -33,7 +33,7 @@ export function renderMarkdownReport(result: ResearchResult): string {
     '',
     ...reliabilityPanel(result),
     '',
-    ...dedupHeadline(summary.totalAds, summary.uniqueCreatives, summary.topCreative),
+    ...dedupHeadline(summary.totalAds, summary.uniqueCreatives, summary.topCreative, adVolume),
     '',
   ];
 
@@ -89,7 +89,7 @@ function reliabilityPanel(result: ResearchResult): string[] {
     `| **Overall confidence** | **${bar(r.overall)}** |`,
     `| Advertiser confidence | ${bar(r.advertiserConfidence)} (${res.method}) |`,
     `| Data completeness | ${bar(r.dataCompleteness)} |`,
-    `| Coverage | ${bar(r.coverage)} |`,
+    `| Coverage | ${r.coverageMeasured ? bar(r.coverage) : 'Not measured'} |`,
     `| Creative coverage | ${bar(r.creativeCoverage)} |`,
     `| Data source | ${r.dataSource} |`,
     '',
@@ -102,12 +102,35 @@ function reliabilityPanel(result: ResearchResult): string[] {
   return lines;
 }
 
-function dedupHeadline(totalAds: number, unique: number, top: CreativeGroup | null): string[] {
+function dedupHeadline(
+  totalAds: number,
+  unique: number,
+  top: CreativeGroup | null,
+  adVolume: ResearchResult['adVolume'],
+): string[] {
   const lines = [
     '## At a Glance',
     '',
-    `**${totalAds} ads → ${unique} unique creatives.**`,
+    `**${totalAds} ads collected → ${unique} unique creatives.** (Both counts verified by direct count of what was collected.)`,
   ];
+  // Meta's own approximate figure — shown only when actually read from the UI,
+  // always attributed and marked approximate. The API's estimated_total_count
+  // is never displayed.
+  if (adVolume.metaReportedApprox !== null) {
+    const note = adVolume.fullyCollected
+      ? 'the full set was collected'
+      : `${totalAds} of them collected here`;
+    lines.push(
+      '',
+      `Meta's Ad Library UI reports **≈${adVolume.metaReportedApprox} results** for this page ` +
+        `(Meta's own approximate figure; ${note}).`,
+    );
+  } else {
+    lines.push(
+      '',
+      "_Total active-ad count: not verifiable._ Meta's UI figure wasn't captured this run, and the Ad Library API's estimate is unreliable, so no total is claimed — only the counts above, which we verified directly.",
+    );
+  }
   if (top) {
     lines.push(
       '',

@@ -47,7 +47,7 @@ export function buildCompanyReportUserPrompt(
   advertiser: AdvertiserPage,
   groups: CreativeGroup[],
   aggregates: Aggregates,
-  estimatedPopulation: number | null,
+  metaReportedApprox: number | null,
   maxCreativesInPrompt = 60,
 ): string {
   const shown = groups.slice(0, maxCreativesInPrompt);
@@ -72,7 +72,9 @@ export function buildCompanyReportUserPrompt(
   return [
     `Advertiser: ${advertiser.name} (page ${advertiser.pageId})`,
     `Category: ${advertiser.category ?? 'Not Available'}`,
-    `Estimated active ads: ${estimatedPopulation ?? 'unknown'} → collapsed to ${aggregates.uniqueCreatives} unique creatives (${aggregates.totalAds} ads sampled).`,
+    `Ads collected: ${aggregates.totalAds} → ${aggregates.uniqueCreatives} unique creatives (both verified by direct count).` +
+      (metaReportedApprox ? ` Meta's Ad Library UI reports ≈${metaReportedApprox} results for this page (Meta's own approximate figure).` : '') +
+      ' Do not state any other total ad count; if you cite scale, use only these verified numbers.',
     '',
     'DISTRIBUTIONS (volume-weighted):',
     dist('Hooks', aggregates.hooks),

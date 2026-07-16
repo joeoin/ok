@@ -137,6 +137,8 @@ export interface ReliabilityScores {
   dataCompleteness: number;
   /** How much of the advertiser's active-ad population was collected. */
   coverage: number;
+  /** False when no verifiable population figure existed, so `coverage` is not meaningful. */
+  coverageMeasured: boolean;
   /** Share of creatives with a usable creative asset (image/video/screenshot). */
   creativeCoverage: number;
   /** Human-readable explanations for anything that lowered the scores. */
@@ -174,6 +176,29 @@ export interface AdvertiserResolutionInfo {
   reasons: string[];
 }
 
+/**
+ * Verifiable ad-volume figures. This type deliberately has no slot for an
+ * unverifiable estimate: the Ad Library API's `estimated_total_count` is
+ * ungrouped, explicitly approximate, and over-counts what the UI shows
+ * (Solace: API 678 vs UI ~370), so it is NEVER stored or displayed as the
+ * advertiser's ad count.
+ */
+export interface AdVolume {
+  /** Ads we actually collected and counted. Fully verifiable. */
+  collectedAds: number;
+  /** Distinct creatives after dedup. Fully verifiable. */
+  uniqueCreatives: number;
+  /**
+   * The Ad Library *UI's* own approximate result count, scraped from the page
+   * ("~370 results"). Meta's figure, attributable and shown as approximate.
+   * null when it could not be read. This is the ONLY population reference we
+   * ever surface — never the API estimate.
+   */
+  metaReportedApprox: number | null;
+  /** True only when we verified we captured Meta's entire reported set. */
+  fullyCollected: boolean;
+}
+
 /** Everything a single research run produces. */
 export interface ResearchResult {
   advertiser: AdvertiserPage;
@@ -187,6 +212,6 @@ export interface ResearchResult {
   reportError: string | null;
   reliability: ReliabilityScores;
   advertiserResolution: AdvertiserResolutionInfo;
-  /** Estimated active-ad population from discovery, when known. */
-  estimatedActiveAds: number | null;
+  /** Verifiable ad-volume figures (never the API's unverifiable estimate). */
+  adVolume: AdVolume;
 }

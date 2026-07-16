@@ -22,7 +22,7 @@ export async function generateCompanyReport(
   advertiser: AdvertiserPage,
   groups: CreativeGroup[],
   aggregates: Aggregates,
-  estimatedPopulation: number | null,
+  metaReportedApprox: number | null,
 ): Promise<ReportOutcome> {
   if (!llm) return { report: null, error: 'Report generation disabled (LLM_PROVIDER=none)' };
   if (groups.length === 0) return { report: null, error: 'No creatives collected — nothing to report on' };
@@ -33,7 +33,7 @@ export async function generateCompanyReport(
       async () => {
         const raw = await llm.complete({
           system: COMPANY_REPORT_SYSTEM_PROMPT,
-          user: buildCompanyReportUserPrompt(advertiser, groups, aggregates, estimatedPopulation),
+          user: buildCompanyReportUserPrompt(advertiser, groups, aggregates, metaReportedApprox),
           json: true,
           maxTokens: 4000,
         });
