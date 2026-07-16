@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.log
+reports/*
+screenshots/*
+downloads/*
+exports/*
+!reports/.gitkeep
+!screenshots/.gitkeep
+!downloads/.gitkeep
+!exports/.gitkeep
