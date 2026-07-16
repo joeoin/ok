@@ -1,0 +1,21 @@
+category,company,queryUsed,estTotalCount,resolvedPageId,realBrandInTopResults,matchVerdict,duplicateObservation,notes
+SaaS,Notion,Notion,2197,,no,FAIL,n/a,"""Notion Pants"" clothing + AI-course spam + romance ads; real page absent"
+SaaS,HubSpot,HubSpot,3661,,no,FAIL,n/a,"""Rapid Drama Hub"", overland expo, bridge saws — ""Hub"" token noise"
+SaaS/B2B,Monday.com,Monday.com,72045,,no,FAIL,n/a,"Plumbing lead-gen, fitness studios matched the word ""Monday"""
+B2B,Salesforce,Salesforce,2085,,no,FAIL,n/a,Tony Robbins + competitor Vibe.co CRM + a salesforce-sites URL; real page absent
+Healthcare,Hims,Hims,1053,355136938262536,yes,PASS,"8/8 identical ""Get Started Today""","Real ""hims"" page dominates; 2 affiliate/spam mixed in"
+Healthcare,Ro,Ro,45639,,no,FAIL,n/a,"2-letter query = pure noise (45K results, all drama/spam)"
+Healthcare,Solace,page_id 110702245120634,678,110702245120634,yes,PASS,55→12 unique creatives,"Resolved via page_id; clean. Keyword ""Solace"" alone was ambiguous (clothing/caskets)"
+Finance,Chime,Chime,4634,,no,FAIL,n/a,"Netshort drama apps, auto sales; real bank absent"
+Finance,SoFi,SoFi,3138540,,no,FAIL,n/a,"3.1M ""results"" — token exploded; jewelry, ""H'page"", pain relief"
+Finance,Robinhood,Robinhood,425,,no,FAIL,n/a,"Integrafintech, Whistle Sports; real page absent"
+E-commerce,Shein,Shein,3641,,no,FAIL,n/a,"""Hype America FREE CAR SEAT"", short-drama spam"
+E-commerce,Chewy,Chewy,11799,,partial,FAIL,n/a,Only a reseller link-title mentions Chewy.com; real brand page absent
+Consumer,Nike,page_id 15087023444,43,15087023444,yes,PASS,"""Kick Off the Season"" repeated","Resolved via page_id; clean. Keyword ""Nike"" = 64,850 reseller junk"
+Consumer,Liquid Death,Liquid Death,2735,,no,FAIL,n/a,"All ""Goodstory""/romance-reading spam; real brand absent"
+DTC,Warby Parker,Warby Parker,474,,no,FAIL,n/a,"""Money Fact Daily"", affiliate ""finance tip"" pages"
+DTC,Athletic Greens (AG1),Athletic Greens,322,183869772601,yes,PASS,"8/8 identical ""Next Gen of Wellness""","""AG1 by Athletic Greens"" page dominates — distinctive multi-word name"
+DTC,Ridge,Ridge Wallet,224,176366735873065,buried,PARTIAL,knockoffs run 75%-off dupes,"Real ""The Ridge"" present but tied with RFID-knockoff pages"
+DTC,Manscaped,Manscaped,83,1545577295743703,yes,PASS,6/6 real,Coined name → clean 100% match
+Local,Orangetheory,Orangetheory Fitness,7798,309888102314,yes,PASS,corp + franchise pages,Corporate + per-studio franchise pages; needs multi-page handling
+DTC,Peloton,Peloton,844,,no,FAIL,n/a,"""Noreva"" belly-fat + a reseller flipping 2 bikes; real brand absent"

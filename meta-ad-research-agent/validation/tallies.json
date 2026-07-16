@@ -1,0 +1,10 @@
+{
+  "total": 20,
+  "pass": 6,
+  "partial": 1,
+  "fail": 13,
+  "keywordTests": 18,
+  "kwPass": 4,
+  "kwPassPct": 22,
+  "kwFailPct": 72
+}

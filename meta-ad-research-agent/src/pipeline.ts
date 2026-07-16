@@ -9,6 +9,7 @@ import { exportCsv } from './reporting/csv-exporter.js';
 import { writeMarkdownReport } from './reporting/markdown-report.js';
 import { AssetStore } from './storage/asset-store.js';
 import { saveResultJson } from './storage/result-store.js';
+import { resolveAdvertiser, type ScoredCandidate } from './resolver/advertiser-resolver.js';
 import { runTimestamp } from './utils/fs.js';
 import { selectFromList } from './utils/select.js';
 import { createLogger } from './utils/logger.js';
@@ -54,7 +55,7 @@ export async function runResearch(
           'Check the spelling, or try a different AD_LIBRARY_COUNTRY.',
       );
     }
-    const advertiser = await chooseAdvertiser(advertisers);
+    const advertiser = await chooseAdvertiser(query, advertisers);
     log.info(`Researching advertiser: ${advertiser.name} (page ${advertiser.pageId})`);
 
     // Step 2 — collect every active ad.
@@ -108,15 +109,41 @@ export async function runResearch(
   }
 }
 
-async function chooseAdvertiser(advertisers: AdvertiserPage[]): Promise<AdvertiserPage> {
+/**
+ * Resolve the query to a single advertiser with confidence gating.
+ * - high-confidence unique match  -> auto-accept
+ * - ambiguous / franchise / ties  -> present a ranked, confidence-labeled choice
+ * - only impersonators/noise      -> refuse (never analyze the wrong company)
+ */
+async function chooseAdvertiser(query: string, advertisers: AdvertiserPage[]): Promise<AdvertiserPage> {
+  const decision = resolveAdvertiser(query, advertisers);
+
+  if (decision.kind === 'refuse') {
+    throw new Error(decision.reason);
+  }
+
+  if (decision.kind === 'accept') {
+    log.info(
+      `Matched "${query}" → ${decision.chosen.name} ` +
+        `(confidence: ${decision.candidate.confidence}, score ${decision.candidate.score.toFixed(2)}; ` +
+        `${decision.candidate.reasons.join(', ')})`,
+    );
+    return decision.chosen;
+  }
+
   const index = await selectFromList(
-    'Multiple advertisers match — which one should I research?',
-    advertisers.slice(0, 15).map((a) => ({
-      label: a.name,
-      detail: [a.category, a.verification === 'BLUE_VERIFIED' ? 'verified' : null, a.likes ? `${a.likes.toLocaleString()} likes` : null, `page ${a.pageId}`]
+    `Multiple advertisers could match "${query}" — which one should I research?`,
+    decision.candidates.map((c: ScoredCandidate) => ({
+      label: `${c.page.name}  [${c.confidence} match]`,
+      detail: [
+        c.page.category,
+        c.page.verification?.toUpperCase().includes('VERIF') ? 'verified' : null,
+        c.page.likes ? `${c.page.likes.toLocaleString()} likes` : null,
+        `page ${c.page.pageId}`,
+      ]
         .filter(Boolean)
         .join(', '),
     })),
   );
-  return advertisers[index] as AdvertiserPage;
+  return decision.candidates[index]!.page;
 }
