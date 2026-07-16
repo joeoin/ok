@@ -37,7 +37,23 @@ cp .env.example .env              # then edit .env
 
 Requirements: Node.js ≥ 18.17.
 
-## Running
+## Web app (customer-facing V1)
+
+A polished single-page app over the engine — the flow a non-technical user follows:
+
+```bash
+npm run web          # http://localhost:4321  (MODE=demo by default)
+```
+
+Journey: **landing search → smart advertiser resolution (auto-accept / choose / refuse) → live progress → executive report → saved reports**, with PDF + CSV download. It talks to the existing engine (resolver, dedup, aggregates, reliability) unchanged.
+
+- `MODE=demo` (default here) serves the flow from **real advertiser data already collected** (Solace, Nike + real reseller/impersonator candidates), so the whole product is usable where facebook.com is blocked. The UI shows a "Demo data" badge.
+- `MODE=live` uses the browser scraper for collection (needs facebook.com reachable + a Chromium binary).
+- No auth, billing, or accounts — those are Phase 2 by design.
+
+Frontend: `public/` (vanilla, no build step). Server + orchestration: `src/server/`.
+
+## CLI
 
 ```bash
 npm run research "Nike"

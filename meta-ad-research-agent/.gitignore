@@ -10,3 +10,4 @@ exports/*
 !screenshots/.gitkeep
 !downloads/.gitkeep
 !exports/.gitkeep
+webdata/
