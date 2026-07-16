@@ -2,30 +2,29 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadConfig } from '../config.js';
+import { scoreCandidate } from '../resolver/advertiser-resolver.js';
 import { buildCsv } from '../utils/csv.js';
 import { CSV_COLUMNS, creativeGroupToCsvRow } from '../reporting/csv-exporter.js';
 import { slugify } from '../utils/fs.js';
 import { createLogger, setLogLevel } from '../utils/logger.js';
-import {
-  analyzeDemo,
-  candidatesFor,
-  searchAdvertiser,
-  type Mode,
-} from './orchestrator.js';
-import { DEMO_ADVERTISERS } from './demo-data.js';
+import type { AdvertiserPage } from '../types.js';
+import { searchAdvertiser } from './orchestrator.js';
+import { getLiveEngine, MetaUnreachableError, NoAdsError } from './live.js';
 import { ReportStore } from './store.js';
 import { buildReportView } from './report-view.js';
 import { renderPdf, renderReportHtml } from './report-pdf.js';
 
+const config = loadConfig();
+setLogLevel(config.logLevel);
 const log = createLogger('server');
-setLogLevel((process.env['LOG_LEVEL'] as 'info') || 'info');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..', '..');
 const PUBLIC_DIR = path.join(PROJECT_ROOT, 'public');
-const MODE: Mode = process.env['MODE'] === 'live' ? 'live' : 'demo';
 const PORT = Number.parseInt(process.env['PORT'] ?? '4321', 10);
 const store = new ReportStore(path.join(PROJECT_ROOT, 'webdata', 'reports'));
+const engine = getLiveEngine(config);
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -64,43 +63,60 @@ async function serveStatic(res: http.ServerResponse, urlPath: string): Promise<v
     res.writeHead(200, { 'content-type': MIME[path.extname(filePath)] ?? 'application/octet-stream' });
     res.end(data);
   } catch {
-    // SPA fallback: unknown non-API path serves the app shell.
     const shell = await fs.readFile(path.join(PUBLIC_DIR, 'index.html'));
     res.writeHead(200, { 'content-type': MIME['.html']! });
     res.end(shell);
   }
 }
 
-/** POST /api/search { query } */
+/** Build a minimal AdvertiserPage from the fields the client carries forward. */
+function pageFromParams(url: URL): AdvertiserPage {
+  return {
+    pageId: (url.searchParams.get('pageId') ?? '').trim(),
+    name: (url.searchParams.get('name') ?? '').trim(),
+    category: url.searchParams.get('industry') || null,
+    website: url.searchParams.get('website') || null,
+    likes: null,
+    verification: url.searchParams.get('verified') === '1' ? 'BLUE_VERIFIED' : null,
+    imageUri: null,
+    country: null,
+  };
+}
+
+/** POST /api/search { query } — live advertiser resolution. */
 async function handleSearch(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = (await readBody(req)) as { query?: string };
   const query = (body.query ?? '').trim();
   if (!query) return sendJson(res, 400, { error: 'Enter a company name.' });
 
-  const pages = candidatesFor(query, MODE);
+  let pages: AdvertiserPage[];
+  try {
+    pages = await engine.search(query);
+  } catch (err) {
+    if (err instanceof MetaUnreachableError) {
+      return sendJson(res, 502, { error: err.reason, kind: 'meta-unreachable' });
+    }
+    log.error(`Search failed: ${String(err)}`);
+    return sendJson(res, 500, { error: 'Search failed. Please try again.', kind: 'error' });
+  }
+
   if (pages.length === 0) {
     return sendJson(res, 200, {
       query,
-      mode: MODE,
       outcome: 'refuse',
       chosenPageId: null,
       candidates: [],
-      message:
-        MODE === 'demo'
-          ? `No demo data for “${query}”. Try Nike, Solace, or HubSpot.`
-          : `No advertiser found for “${query}”.`,
+      message: `No advertiser matching “${query}” was found in the Meta Ad Library. Check the spelling or try the exact page name.`,
     });
   }
-  sendJson(res, 200, searchAdvertiser(query, pages, MODE));
+  sendJson(res, 200, searchAdvertiser(query, pages));
 }
 
-/** GET /api/analyze/stream?query=&pageId= — SSE progress then a final event. */
+/** GET /api/analyze/stream?query=&pageId=&name=… — SSE progress then final event. */
 async function handleAnalyzeStream(res: http.ServerResponse, url: URL): Promise<void> {
   const query = (url.searchParams.get('query') ?? '').trim();
-  const pageId = (url.searchParams.get('pageId') ?? '').trim();
-  const pages = candidatesFor(query, MODE);
-  const search = pages.length ? searchAdvertiser(query, pages, MODE) : null;
-  const chosen = pages.find((p) => p.pageId === pageId);
+  const page = pageFromParams(url);
+  const method = url.searchParams.get('method') === 'auto' ? 'auto-accepted' : 'user-selected';
 
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -109,25 +125,23 @@ async function handleAnalyzeStream(res: http.ServerResponse, url: URL): Promise<
   });
   const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
-  if (!chosen || !search) {
-    send('error', { message: 'That advertiser is no longer available. Please search again.' });
+  if (!query || !page.pageId || !page.name) {
+    send('error', { message: 'Missing advertiser details. Please search again.' });
     res.end();
     return;
   }
 
-  const candidate = search.candidates.find((c) => c.pageId === pageId);
-  const method: 'auto-accepted' | 'user-selected' =
-    search.outcome === 'auto' && search.chosenPageId === pageId ? 'auto-accepted' : 'user-selected';
+  const scored = scoreCandidate(query, page);
+  send('progress', { stage: 'resolving', status: 'active', detail: `Confirming ${page.name}` });
 
   try {
-    const result = await analyzeDemo(
+    const result = await engine.analyze(
       {
         query,
-        pageId,
-        page: chosen,
-        resolutionConfidencePct: candidate?.confidencePct ?? 100,
+        page,
+        resolutionConfidencePct: scored.confidencePct,
         resolutionMethod: method,
-        resolutionReasons: candidate?.reasons ?? [],
+        resolutionReasons: scored.reasons,
       },
       (stage, status, detail) => send('progress', { stage, status, detail }),
     );
@@ -135,8 +149,14 @@ async function handleAnalyzeStream(res: http.ServerResponse, url: URL): Promise<
     await store.save(id, result);
     send('done', { reportId: id });
   } catch (err) {
-    log.error(`Analysis failed: ${String(err)}`);
-    send('error', { message: 'Analysis failed. Please try again.' });
+    const message =
+      err instanceof MetaUnreachableError || err instanceof NoAdsError
+        ? err.message
+        : 'Analysis failed unexpectedly. Please try again.';
+    if (!(err instanceof MetaUnreachableError) && !(err instanceof NoAdsError)) {
+      log.error(`Analysis failed: ${String(err)}`);
+    }
+    send('error', { message });
   } finally {
     res.end();
   }
@@ -145,13 +165,11 @@ async function handleAnalyzeStream(res: http.ServerResponse, url: URL): Promise<
 async function handleReports(res: http.ServerResponse): Promise<void> {
   sendJson(res, 200, { reports: await store.list() });
 }
-
 async function handleReport(res: http.ServerResponse, id: string): Promise<void> {
   const saved = await store.get(id);
   if (!saved) return sendJson(res, 404, { error: 'Report not found.' });
-  sendJson(res, 200, { mode: MODE, view: buildReportView(saved.result) });
+  sendJson(res, 200, { view: buildReportView(saved.result) });
 }
-
 async function handleReportPdf(res: http.ServerResponse, id: string): Promise<void> {
   const saved = await store.get(id);
   if (!saved) return sendJson(res, 404, { error: 'Report not found.' });
@@ -162,7 +180,6 @@ async function handleReportPdf(res: http.ServerResponse, id: string): Promise<vo
   });
   res.end(pdf);
 }
-
 async function handleReportCsv(res: http.ServerResponse, id: string): Promise<void> {
   const saved = await store.get(id);
   if (!saved) return sendJson(res, 404, { error: 'Report not found.' });
@@ -183,9 +200,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/analyze/stream') return await handleAnalyzeStream(res, url);
     if (req.method === 'GET' && p === '/api/reports') return await handleReports(res);
 
-    const reportMatch = p.match(/^\/api\/reports\/([a-z0-9-]+)(\/pdf|\/csv)?$/i);
-    if (req.method === 'GET' && reportMatch) {
-      const [, id, sub] = reportMatch;
+    const m = p.match(/^\/api\/reports\/([a-z0-9-]+)(\/pdf|\/csv)?$/i);
+    if (req.method === 'GET' && m) {
+      const [, id, sub] = m;
       if (sub === '/pdf') return await handleReportPdf(res, id!);
       if (sub === '/csv') return await handleReportCsv(res, id!);
       return await handleReport(res, id!);
@@ -201,6 +218,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  log.info(`AdIntel web app running at http://localhost:${PORT}  (mode: ${MODE})`);
-  log.info(`Demo advertisers available: ${Object.values(DEMO_ADVERTISERS).map((d) => d.page.name).join(', ')}`);
+  log.info(`AdIntel running at http://localhost:${PORT} — LIVE (real Meta Ad Library)`);
+  if (config.llm.provider === 'none') {
+    log.warn('LLM_PROVIDER=none: reports will include data sections but no AI narrative. Set LLM_API_KEY for full briefings.');
+  }
 });
+
+process.on('SIGINT', () => engine.close().finally(() => process.exit(0)));
+process.on('SIGTERM', () => engine.close().finally(() => process.exit(0)));

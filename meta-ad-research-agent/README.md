@@ -42,16 +42,19 @@ Requirements: Node.js ≥ 18.17.
 A polished single-page app over the engine — the flow a non-technical user follows:
 
 ```bash
-npm run web          # http://localhost:4321  (MODE=demo by default)
+npx playwright install chromium   # once
+LLM_API_KEY=sk-...                # optional — enables the AI narrative
+npm run web                        # http://localhost:4321 — LIVE
 ```
 
-Journey: **landing search → smart advertiser resolution (auto-accept / choose / refuse) → live progress → executive report → saved reports**, with PDF + CSV download. It talks to the existing engine (resolver, dedup, aggregates, reliability) unchanged.
+Journey: **landing search → smart advertiser resolution (auto-accept / choose / refuse) → live progress → executive report → saved reports**, with PDF + CSV download. It drives the real engine (scraper → resolver → analyzer → dedup → aggregates → reliability → report) unchanged.
 
-- `MODE=demo` (default here) serves the flow from **real advertiser data already collected** (Solace, Nike + real reseller/impersonator candidates), so the whole product is usable where facebook.com is blocked. The UI shows a "Demo data" badge.
-- `MODE=live` uses the browser scraper for collection (needs facebook.com reachable + a Chromium binary).
+- **Live only — no demo data, no hardcoded companies.** The search bar resolves and analyzes any advertiser directly from the Meta Ad Library.
+- If Meta can't be reached, the app shows the exact reason and never fabricates or falls back to sample data. It needs facebook.com reachable + a Chromium binary (`CHROMIUM_PATH` to point at an existing one).
+- Without `LLM_API_KEY` you still get every data section (creative winners, distributions, reliability); the AI narrative needs a key.
 - No auth, billing, or accounts — those are Phase 2 by design.
 
-Frontend: `public/` (vanilla, no build step). Server + orchestration: `src/server/`.
+Frontend: `public/` (vanilla, no build step). Server + live orchestration: `src/server/`. See `validation/LIVE_VALIDATION.md` for the 22-company validation.
 
 ## CLI
 

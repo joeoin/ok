@@ -60,7 +60,7 @@ function viewHome() {
       h('h1', {}, 'See any competitor’s ', h('span', { class: 'grad' }, 'entire ad strategy'), '.'),
       h('p', { class: 'lede' }, 'Type a company name. Get a McKinsey-grade briefing of the ads they’re running right now — hooks, offers, winning creatives, and how to beat them.'),
       h('div', { class: 'searchbar' }, h('span', { style: 'display:grid;place-items:center;padding-left:8px;color:var(--text-3)', html: icon.search }), input, btn),
-      h('div', { class: 'examples' }, h('span', { class: 'lbl' }, 'Try'), chip('Nike'), chip('Solace'), chip('HubSpot')),
+      h('div', { class: 'examples' }, h('span', { class: 'lbl' }, 'Try'), chip('Nike'), chip('Duolingo'), chip('Notion'), chip('Chewy')),
       h('div', { class: 'trust-row' },
         h('span', {}, h('span', { html: icon.check, style: 'color:var(--green);display:grid' }), 'Never analyzes the wrong company'),
         h('span', {}, h('span', { html: icon.check, style: 'color:var(--green);display:grid' }), 'Deduplicates every creative'),
@@ -79,11 +79,34 @@ async function startSearch(query) {
       h('p', { class: 'muted', style: 'text-align:center;margin-top:24px' }, 'Finding “', query, '” in the Meta Ad Library…'),
     ),
   ));
+  let res, data;
   try {
-    const search = await api('/api/search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) });
-    flow = { query, search };
-    viewResolve();
-  } catch (e) { toast(e.message); viewHome(); }
+    res = await fetch('/api/search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) });
+    data = await res.json();
+  } catch {
+    return viewSourceError(query, 'Could not reach the AdIntel server. Is it still running?', false);
+  }
+  if (!res.ok) {
+    return viewSourceError(query, data.error || 'Search failed.', data.kind === 'meta-unreachable');
+  }
+  flow = { query, search: data };
+  viewResolve();
+}
+
+// Honest failure screen — shown when the real data source can't be reached.
+function viewSourceError(query, message, metaUnreachable) {
+  mount(h('div', { class: 'view' },
+    h('div', { class: 'page-head' }, h('div', { class: 'kicker' }, 'Advertiser resolution'), h('h2', {}, 'Results for “', query, '”')),
+    h('div', { class: 'refuse' },
+      h('div', { class: 'icon', html: icon.alert }),
+      h('h3', {}, metaUnreachable ? 'Couldn’t reach the Meta Ad Library' : 'Something went wrong'),
+      h('p', {}, message),
+      h('div', { style: 'margin-top:20px;display:flex;gap:10px;justify-content:center' },
+        h('button', { class: 'btn btn-primary', onclick: () => startSearch(query) }, 'Try again'),
+        h('button', { class: 'btn btn-ghost', onclick: () => viewHome() }, 'New search'),
+      ),
+    ),
+  ));
 }
 
 // ── Screen 3: Smart Advertiser Resolution ──────────────────────────────────
@@ -101,14 +124,8 @@ function advCardEl(c, onPick) {
 
 function viewResolve() {
   const { query, search } = flow;
-  const modeBadge = search.mode === 'demo'
-    ? h('span', { class: 'badge badge-demo' }, 'Demo data')
-    : h('span', { class: 'badge badge-live' }, 'Live');
-
   const head = h('div', { class: 'page-head' },
-    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap' },
-      h('div', {}, h('div', { class: 'kicker' }, 'Advertiser resolution'), h('h2', {}, 'Results for “', query, '”')),
-      modeBadge),
+    h('div', {}, h('div', { class: 'kicker' }, 'Advertiser resolution'), h('h2', {}, 'Results for “', query, '”')),
   );
 
   let body;
@@ -179,8 +196,15 @@ function startAnalysis(chosen) {
     ),
   ));
 
-  const url = `/api/analyze/stream?query=${encodeURIComponent(flow.query)}&pageId=${encodeURIComponent(chosen.pageId)}`;
-  const es = new EventSource(url);
+  const params = new URLSearchParams({ query: flow.query, pageId: chosen.pageId, name: chosen.name });
+  const isAuto = flow.search.outcome === 'auto' && flow.search.chosenPageId === chosen.pageId;
+  params.set('method', isAuto ? 'auto' : 'user');
+  if (chosen.website) params.set('website', chosen.website);
+  if (chosen.industry) params.set('industry', chosen.industry);
+  if (chosen.verified) params.set('verified', '1');
+
+  const es = new EventSource('/api/analyze/stream?' + params.toString());
+  let failed = false;
   es.addEventListener('progress', (ev) => {
     const { stage, status, detail } = JSON.parse(ev.data);
     const s = stepEls[stage]; if (!s) return;
@@ -190,11 +214,27 @@ function startAnalysis(chosen) {
   });
   es.addEventListener('done', (ev) => { es.close(); const { reportId } = JSON.parse(ev.data); location.hash = `#/report/${reportId}`; });
   es.addEventListener('error', (ev) => {
-    es.close();
+    failed = true; es.close();
     let msg = 'Analysis failed. Please try again.';
     try { if (ev.data) msg = JSON.parse(ev.data).message; } catch {}
-    toast(msg); viewResolve();
+    viewAnalysisError(chosen, msg);
   });
+  // Network drop / server gone: EventSource fires a generic error with no data.
+  es.onerror = () => { if (!failed && es.readyState === EventSource.CLOSED) { es.close(); viewAnalysisError(chosen, 'Lost connection to the AdIntel server during analysis.'); } };
+}
+
+function viewAnalysisError(chosen, message) {
+  mount(h('div', { class: 'view' },
+    h('div', { class: 'refuse', style: 'margin-top:56px' },
+      h('div', { class: 'icon', html: icon.alert }),
+      h('h3', {}, 'Analysis couldn’t finish'),
+      h('p', {}, message),
+      h('div', { style: 'margin-top:20px;display:flex;gap:10px;justify-content:center' },
+        h('button', { class: 'btn btn-primary', onclick: () => startAnalysis(chosen) }, 'Try again'),
+        h('button', { class: 'btn btn-ghost', onclick: () => viewHome() }, 'New search'),
+      ),
+    ),
+  ));
 }
 
 // ── Screen 5: Executive Report ─────────────────────────────────────────────
@@ -235,8 +275,7 @@ async function viewReport(id) {
       h('div', { class: 'report-title' },
         h('div', { class: 'kicker' }, 'Competitive Intelligence Briefing'),
         h('h1', {}, v.advertiser.name, v.advertiser.verified ? h('span', { class: 'verified', html: icon.verified }) : null),
-        h('div', { class: 'sub' }, [v.advertiser.industry, v.advertiser.website].filter(Boolean).join(' · '), ' · ', new Date(v.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
-          data.mode === 'demo' ? h('span', { class: 'badge badge-demo', style: 'margin-left:10px' }, 'Demo data') : null),
+        h('div', { class: 'sub' }, [v.advertiser.industry, v.advertiser.website].filter(Boolean).join(' · '), ' · ', new Date(v.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })),
       ),
       h('div', { class: 'report-actions' },
         h('a', { class: 'btn btn-ghost btn-sm', href: `/api/reports/${id}/csv` }, h('span', { html: icon.download }), 'CSV'),
