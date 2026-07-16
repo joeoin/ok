@@ -1,0 +1,44 @@
+=== PHASE A — Advertiser resolution (26 real companies) ===
+
+company               industry    #pages decision     conf%  official?
+Gracey Care           Healthcare  1      accept        99    yes
+Grammarly             SaaS        1      accept        99    yes
+Hims                  Healthcare  3      accept        99    yes
+Manscaped             E-commerce  1      accept        99    yes
+Solace                Healthcare  4      disambiguate  99    yes
+Orangetheory Fitness  Consumer    3      disambiguate  97    yes
+Athletic Greens       E-commerce  1      disambiguate  86    yes
+Nike                  Consumer    4      refuse         0    no
+Duolingo              Consumer    3      refuse         0    no
+Chewy                 E-commerce  2      refuse         0    no
+Coinbase              Finance     2      refuse         0    no
+Squarespace           SaaS        3      refuse         0    no
+Calm                  Healthcare  1      refuse         0    no
+Ro                    Healthcare  2      refuse         0    no
+Chime                 Finance     2      refuse         0    no
+SoFi                  Finance     3      refuse         0    no
+Warby Parker          E-commerce  3      refuse         0    no
+Liquid Death          Consumer    2      refuse         0    no
+Salesforce            B2B         3      refuse         0    no
+Monday.com            B2B         2      refuse         0    no
+Peloton               Consumer    2      refuse         0    no
+HubSpot               B2B         3      refuse         0    no
+Notion                SaaS        3      refuse         0    no
+Shein                 E-commerce  2      refuse         0    no
+Robinhood             Finance     2      refuse         0    no
+HelloFresh            E-commerce  2      refuse         0    no
+
+Resolved correctly: 26/26   Wrong-advertiser picks: 0 (must be 0)
+
+=== PHASE B — Full engine end-to-end (5 real advertisers) ===
+
+Gracey Care     24 ads →  13 creatives (1.8x)  placeholder:OK  AI:OK  report:OK  PDF:71KB  2321ms
+Manscaped       30 ads →  14 creatives (2.1x)  placeholder:OK  AI:OK  report:OK  PDF:71KB  742ms
+Grammarly       30 ads →   1 creatives (30x)  placeholder:OK  AI:OK  report:OK  PDF:66KB  690ms
+Nike            10 ads →   4 creatives (2.5x)  placeholder:OK  AI:OK  report:OK  PDF:67KB  559ms
+Solace          15 ads →   9 creatives (1.7x)  placeholder:OK  AI:OK  report:OK  PDF:70KB  537ms
+
+=== SUMMARY ===
+Phase A: 26/26 resolved correctly, 0 wrong picks
+Phase B: dedup OK, placeholder OK, AI OK, report OK, PDF OK
+Avg engine runtime (excl. live scrape + real LLM): 970ms
