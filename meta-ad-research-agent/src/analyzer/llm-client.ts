@@ -14,6 +14,8 @@ export interface LlmRequest {
 export interface LlmClient {
   readonly name: string;
   complete(request: LlmRequest): Promise<string>;
+  /** Cheap auth check. Throws LlmConfigError on a rejected key; resolves otherwise. */
+  verify(): Promise<void>;
 }
 
 export interface LlmClientConfig {
@@ -21,6 +23,18 @@ export interface LlmClientConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+}
+
+/**
+ * A user-facing configuration problem (bad/missing API key, wrong provider).
+ * Its message is safe and friendly — never a raw 401 body — and is shown to
+ * the customer as a configuration error.
+ */
+export class LlmConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LlmConfigError';
+  }
 }
 
 class HttpError extends Error {
@@ -34,6 +48,50 @@ class HttpError extends Error {
 
 const isTransient = (error: unknown): boolean =>
   !(error instanceof HttpError) || error.status === 429 || error.status >= 500;
+
+const HOSTED_HOSTS = ['api.openai.com', 'api.anthropic.com'];
+
+/** Map an auth failure to a friendly, safe message; return null if not an auth error. */
+function toConfigError(error: unknown, config: LlmClientConfig): LlmConfigError | null {
+  if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+    return new LlmConfigError(
+      `AI analysis is misconfigured: the ${config.provider} API rejected the API key ` +
+        `(HTTP ${error.status}). Check LLM_API_KEY and LLM_PROVIDER in your .env.` +
+        providerMismatchHint(config),
+    );
+  }
+  return null;
+}
+
+function providerMismatchHint(config: LlmClientConfig): string {
+  const key = config.apiKey.trim();
+  if (config.provider === 'openai' && key.startsWith('sk-ant-')) {
+    return ' The key looks like an Anthropic key (sk-ant-…) — set LLM_PROVIDER=anthropic.';
+  }
+  if (config.provider === 'anthropic' && key.startsWith('sk-') && !key.startsWith('sk-ant-')) {
+    return ' The key looks like an OpenAI key (sk-…) — set LLM_PROVIDER=openai.';
+  }
+  return '';
+}
+
+/**
+ * Static, no-network checks that catch the most common misconfigurations
+ * before we spend a scrape. Returns a friendly error or null.
+ */
+export function preflightLlmConfig(config: LlmClientConfig): LlmConfigError | null {
+  if (config.provider === 'none') return null;
+  const key = config.apiKey.trim();
+  const isHosted = HOSTED_HOSTS.some((host) => config.baseUrl.includes(host));
+  if (!key && isHosted) {
+    return new LlmConfigError(
+      `AI analysis is enabled (LLM_PROVIDER=${config.provider}) but no API key is set. ` +
+        'Add LLM_API_KEY to your .env, or set LLM_PROVIDER=none to run without AI narrative.',
+    );
+  }
+  const mismatch = providerMismatchHint(config).trim();
+  if (mismatch) return new LlmConfigError(`AI analysis is misconfigured.${providerMismatchHint(config)}`);
+  return null;
+}
 
 async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
   const response = await fetch(url, {
@@ -90,6 +148,25 @@ class OpenAiCompatibleClient implements LlmClient {
       },
     );
   }
+
+  async verify(): Promise<void> {
+    await verifyAuth(() => this.complete({ system: 'Health check.', user: 'Reply with OK.', maxTokens: 5 }), this.config);
+  }
+}
+
+/**
+ * Run a minimal completion to confirm the key is accepted. Converts a 401/403
+ * into a friendly LlmConfigError; other (transient/network) errors during the
+ * probe are logged but not fatal — the real analysis will surface them.
+ */
+async function verifyAuth(probe: () => Promise<string>, config: LlmClientConfig): Promise<void> {
+  try {
+    await probe();
+  } catch (error) {
+    const configError = toConfigError(error, config);
+    if (configError) throw configError;
+    log.warn(`LLM auth probe did not complete (non-auth): ${String(error).slice(0, 160)}`);
+  }
 }
 
 /** Native Anthropic Messages API client. */
@@ -128,6 +205,10 @@ class AnthropicClient implements LlmClient {
         onRetry: (e, n) => log.warn(`LLM call retry ${n}: ${String(e).slice(0, 200)}`),
       },
     );
+  }
+
+  async verify(): Promise<void> {
+    await verifyAuth(() => this.complete({ system: 'Health check.', user: 'Reply with OK.', maxTokens: 5 }), this.config);
   }
 }
 

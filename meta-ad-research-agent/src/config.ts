@@ -74,9 +74,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     llm: {
       provider: c.LLM_PROVIDER,
-      apiKey: c.LLM_API_KEY,
-      baseUrl: c.LLM_BASE_URL || DEFAULT_BASE_URLS[c.LLM_PROVIDER] || '',
-      model: c.LLM_MODEL,
+      // Trim surrounding whitespace/quotes — a frequent cause of spurious 401s.
+      apiKey: c.LLM_API_KEY.trim().replace(/^['"]|['"]$/g, ''),
+      baseUrl: (c.LLM_BASE_URL.trim() || DEFAULT_BASE_URLS[c.LLM_PROVIDER] || '').replace(/\/$/, ''),
+      model: c.LLM_MODEL.trim(),
       concurrency: c.LLM_CONCURRENCY,
     },
     scraper: {

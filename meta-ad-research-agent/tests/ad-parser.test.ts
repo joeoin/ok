@@ -66,6 +66,55 @@ describe('extractAds', () => {
   });
 });
 
+describe('carousel placeholder extraction (renders {{...}} templates)', () => {
+  // A dynamic/DCO carousel: the snapshot title is the unrendered template,
+  // but each card carries the real rendered product copy.
+  const dcoPayload = {
+    payload: {
+      results: [
+        [
+          {
+            adArchiveID: '555',
+            pageID: '999',
+            pageName: 'Duolingo',
+            publisherPlatform: ['FACEBOOK'],
+            isActive: true,
+            snapshot: {
+              page_name: 'Duolingo',
+              title: '{{product.name}}',
+              link_description: '{{product.description}}',
+              link_url: 'https://duolingo.com/{{product.url}}',
+              body: { text: 'Learn {{product.name}} free' },
+              display_format: 'DCO',
+              cards: [
+                { title: 'Duolingo Super', link_description: '14 days free', link_url: 'https://duolingo.com/super', body: 'Learn Spanish free' },
+                { title: 'Duolingo Max', link_description: 'AI tutor', link_url: 'https://duolingo.com/max', body: 'Learn French free' },
+              ],
+            },
+          },
+        ],
+      ],
+    },
+  };
+
+  it('prefers rendered card copy over snapshot placeholders', () => {
+    const [ad] = extractAds([dcoPayload], 'US');
+    expect(ad!.headline).toBe('Duolingo Super');
+    expect(ad!.description).toBe('14 days free');
+    expect(ad!.landingPageUrl).toBe('https://duolingo.com/super');
+    expect(ad!.adText).toBe('Learn Spanish free');
+    // No unrendered token leaks into the record.
+    expect(JSON.stringify(ad)).not.toMatch(/\{\{/);
+  });
+
+  it('keeps the template only when no rendered value exists anywhere', () => {
+    const p = JSON.parse(JSON.stringify(dcoPayload));
+    p.payload.results[0][0].snapshot.cards = [];
+    const [ad] = extractAds([p], 'US');
+    expect(ad!.headline).toBe('{{product.name}}'); // unavoidable — nothing rendered to fall back to
+  });
+});
+
 describe('extractAdvertisers', () => {
   it('extracts advertiser pages from typeahead payloads', () => {
     const pages = extractAdvertisers([typeaheadPayload]);

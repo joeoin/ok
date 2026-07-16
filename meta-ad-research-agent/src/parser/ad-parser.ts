@@ -126,6 +126,24 @@ function extractAssets(snapshot: Obj): CreativeAsset[] {
   return assets;
 }
 
+/** Meta dynamic-creative template token, e.g. {{product.name}} or {{ product.brand }}. */
+const PLACEHOLDER_RE = /\{\{[^}]*\}\}/;
+export function hasPlaceholder(text: string): boolean {
+  return PLACEHOLDER_RE.test(text);
+}
+
+/**
+ * From several candidate strings for the same field (snapshot + carousel
+ * cards), return the final RENDERED copy: prefer a value with no unrendered
+ * {{placeholder}} tokens; fall back to the first non-empty value only if every
+ * candidate is still a template.
+ */
+function pickRendered(candidates: Array<string | null>): string | null {
+  const nonEmpty = candidates.filter((c): c is string => c !== null && c.trim() !== '');
+  const rendered = nonEmpty.find((c) => !hasPlaceholder(c));
+  return rendered ?? nonEmpty[0] ?? null;
+}
+
 function inferCreativeType(displayFormat: string | null, assets: CreativeAsset[], snapshot: Obj): CreativeType {
   const fmt = displayFormat?.toUpperCase() ?? '';
   if (fmt.includes('CAROUSEL') || fmt === 'DCO' || (Array.isArray(snapshot['cards']) && (snapshot['cards'] as unknown[]).length > 1)) {
@@ -144,7 +162,7 @@ export function parseAdNode(node: Obj, searchCountry: string): AdRecord | null {
   if (!adArchiveId || !isObj(snapshot)) return null;
 
   const cards = Array.isArray(snapshot['cards']) ? (snapshot['cards'] as unknown[]).filter(isObj) : [];
-  const firstCard = cards[0] ?? null;
+  const cardValues = (keys: string[]): Array<string | null> => cards.map((c) => asString(pick(c, keys)));
 
   const advertiserName =
     asString(pick(snapshot, ['page_name', 'pageName'])) ?? asString(pick(node, ['pageName', 'page_name'])) ?? 'Not Available';
@@ -157,20 +175,21 @@ export function parseAdNode(node: Obj, searchCountry: string): AdRecord | null {
   const displayFormat = asString(pick(snapshot, ['display_format', 'displayFormat']));
   const assets = extractAssets(snapshot);
 
-  const headline =
-    asString(pick(snapshot, ['title'])) ?? (firstCard ? asString(pick(firstCard, ['title'])) : null);
-  const description =
-    asString(pick(snapshot, ['link_description', 'linkDescription'])) ??
-    (firstCard ? asString(pick(firstCard, ['link_description'])) : null);
-  const ctaText =
-    asString(pick(snapshot, ['cta_text', 'ctaText'])) ?? (firstCard ? asString(pick(firstCard, ['cta_text'])) : null);
-  const ctaType =
-    asString(pick(snapshot, ['cta_type', 'ctaType'])) ?? (firstCard ? asString(pick(firstCard, ['cta_type'])) : null);
-  const landingPageUrl =
-    asString(pick(snapshot, ['link_url', 'linkURL'])) ?? (firstCard ? asString(pick(firstCard, ['link_url'])) : null);
+  // Prefer the final rendered copy over unrendered {{placeholder}} templates,
+  // pulling from the snapshot and every carousel card.
+  const headline = pickRendered([asString(pick(snapshot, ['title'])), ...cardValues(['title'])]);
+  const description = pickRendered([
+    asString(pick(snapshot, ['link_description', 'linkDescription'])),
+    ...cardValues(['link_description', 'linkDescription']),
+  ]);
+  const ctaText = pickRendered([asString(pick(snapshot, ['cta_text', 'ctaText'])), ...cardValues(['cta_text', 'ctaText'])]);
+  const ctaType = asString(pick(snapshot, ['cta_type', 'ctaType'])) ?? (cards[0] ? asString(pick(cards[0], ['cta_type'])) : null);
+  const landingPageUrl = pickRendered([
+    asString(pick(snapshot, ['link_url', 'linkURL'])),
+    ...cardValues(['link_url', 'linkURL']),
+  ]);
 
-  let adText = extractBodyText(snapshot);
-  if (!adText && firstCard) adText = asString(pick(firstCard, ['body'])) ?? null;
+  const adText = pickRendered([extractBodyText(snapshot), ...cardValues(['body'])]);
 
   const platforms = asStringArray(pick(node, ['publisherPlatform', 'publisher_platform'])).map((p) => p.toLowerCase());
 

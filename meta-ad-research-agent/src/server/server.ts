@@ -11,6 +11,7 @@ import { createLogger, setLogLevel } from '../utils/logger.js';
 import type { AdvertiserPage } from '../types.js';
 import { searchAdvertiser } from './orchestrator.js';
 import { getLiveEngine, MetaUnreachableError, NoAdsError } from './live.js';
+import { LlmConfigError } from '../analyzer/llm-client.js';
 import { ReportStore } from './store.js';
 import { buildReportView } from './report-view.js';
 import { renderPdf, renderReportHtml } from './report-pdf.js';
@@ -149,14 +150,10 @@ async function handleAnalyzeStream(res: http.ServerResponse, url: URL): Promise<
     await store.save(id, result);
     send('done', { reportId: id });
   } catch (err) {
-    const message =
-      err instanceof MetaUnreachableError || err instanceof NoAdsError
-        ? err.message
-        : 'Analysis failed unexpectedly. Please try again.';
-    if (!(err instanceof MetaUnreachableError) && !(err instanceof NoAdsError)) {
-      log.error(`Analysis failed: ${String(err)}`);
-    }
-    send('error', { message });
+    const friendly = err instanceof MetaUnreachableError || err instanceof NoAdsError || err instanceof LlmConfigError;
+    const message = friendly ? (err as Error).message : 'Analysis failed unexpectedly. Please try again.';
+    if (!friendly) log.error(`Analysis failed: ${String(err)}`);
+    send('error', { message, kind: err instanceof LlmConfigError ? 'llm-config' : 'error' });
   } finally {
     res.end();
   }

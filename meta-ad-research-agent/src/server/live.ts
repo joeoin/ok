@@ -3,7 +3,7 @@ import type { AppConfig } from '../config.js';
 import { BrowserManager } from '../browser/browser-manager.js';
 import { AdLibraryScraper } from '../scraper/ad-library-scraper.js';
 import { AdAnalyzer } from '../analyzer/ad-analyzer.js';
-import { createLlmClient } from '../analyzer/llm-client.js';
+import { createLlmClient, preflightLlmConfig, LlmConfigError } from '../analyzer/llm-client.js';
 import { groupCreatives } from '../analyzer/creative-grouper.js';
 import { computeAggregates } from '../analyzer/aggregate.js';
 import { computeReliability } from '../analyzer/reliability.js';
@@ -108,6 +108,15 @@ export class LiveEngine {
     const scraper = this.scraper(browser);
     const collectedAt = new Date().toISOString();
 
+    // 0) Verify LLM auth BEFORE scraping, so a bad key fails fast with a
+    //    friendly message instead of a raw 401 after a full scrape.
+    const llm = createLlmClient(this.config.llm);
+    if (this.config.llm.provider !== 'none') {
+      const staticError = preflightLlmConfig(this.config.llm);
+      if (staticError) throw staticError;
+      await llm!.verify(); // throws LlmConfigError on a rejected key
+    }
+
     onProgress('resolving', 'done', `${input.page.name} · ${input.resolutionConfidencePct}% confidence`);
 
     // 1) Collect.
@@ -135,8 +144,7 @@ export class LiveEngine {
     );
     onProgress('deduplicating', 'done', `${rawAds.length} ads → ${skeleton.length} unique creatives`);
 
-    // 3) Analyze one representative per unique creative.
-    const llm = createLlmClient(this.config.llm);
+    // 3) Analyze one representative per unique creative (llm verified in step 0).
     onProgress('analyzing', 'active', llm ? 'Analyzing hooks, offers, psychology' : 'AI analysis disabled (no LLM key)');
     const analyzer = new AdAnalyzer(llm, this.config.llm.concurrency);
     const analyzedReps = await analyzer.analyzeAll(skeleton.map((g) => g.representative));

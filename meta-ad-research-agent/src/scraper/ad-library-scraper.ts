@@ -121,22 +121,32 @@ export class AdLibraryScraper {
     };
 
     absorb();
-    let idleSince = Date.now();
     let lastCount = collected.size;
+    let idleRounds = 0;
+    // Require several consecutive empty passes before deciding we're done, so a
+    // slow lazy-load isn't mistaken for the end of results. ~1 round per 1.5s of
+    // the configured idle budget, minimum 3.
+    const maxIdleRounds = Math.max(3, Math.ceil(this.options.scrollIdleMs / 1500));
 
-    // Infinite-scroll until no new ads arrive for scrollIdleMs or we hit maxAds.
+    // Keep scrolling to the true page bottom (reliable lazy-load trigger) until
+    // no more ads load for maxIdleRounds passes, or we reach maxAds (0 = all).
     while (this.options.maxAds === 0 || collected.size < this.options.maxAds) {
-      await page.mouse.wheel(0, 2400);
-      await sleep(900);
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => undefined);
+      await page.mouse.wheel(0, 3000);
+      await sleep(1000);
       absorb();
 
       if (collected.size > lastCount) {
         lastCount = collected.size;
-        idleSince = Date.now();
+        idleRounds = 0;
         log.info(`Collected ${collected.size} ads so far…`);
-      } else if (Date.now() - idleSince > this.options.scrollIdleMs) {
-        log.info('No new ads after scrolling — collection complete');
-        break;
+      } else {
+        idleRounds++;
+        if (idleRounds >= maxIdleRounds) {
+          log.info(`No new ads after ${idleRounds} scroll passes — collection complete (${collected.size} ads)`);
+          break;
+        }
+        await sleep(1000); // give slow results extra time before the next pass
       }
     }
 

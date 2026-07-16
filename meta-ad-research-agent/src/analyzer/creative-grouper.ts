@@ -31,9 +31,26 @@ function assetKey(url: string | null): string {
 }
 
 /**
+ * Landing-URL identity for dedup: host + path only. Per-ad tracking params
+ * (utm_*, fbclid, ad ids in the query) are the #1 cause of otherwise-identical
+ * creatives failing to collapse — Meta appends them per delivery, not per
+ * creative — so they are excluded from the signature.
+ */
+export function landingKey(url: string | null): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    return (u.host + u.pathname).toLowerCase().replace(/\/+$/, '');
+  } catch {
+    return norm(url).split('?')[0] ?? '';
+  }
+}
+
+/**
  * Signature identifying one distinct creative. Uses whatever fields are
  * present; for API-thin data (headline only) it degrades gracefully to
  * headline + format, which is exactly how Meta duplicates those ads.
+ * Deliberately excludes per-ad delivery noise (URL query params, CDN tokens).
  */
 export function creativeSignature(ad: AdRecord): string {
   const assetKeys = ad.assets
@@ -46,7 +63,7 @@ export function creativeSignature(ad: AdRecord): string {
     norm(ad.adText),
     norm(ad.description),
     norm(ad.ctaText),
-    norm(ad.landingPageUrl),
+    landingKey(ad.landingPageUrl),
     ad.creativeType,
     assetKeys,
   ];

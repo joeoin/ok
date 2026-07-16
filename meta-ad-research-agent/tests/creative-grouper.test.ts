@@ -52,6 +52,31 @@ describe('creativeSignature', () => {
     const b = ad({ adArchiveId: '2', assets: [{ type: 'image', url: 'https://cdn/x/img.jpg?oh=zzz', previewUrl: null, localPath: null }] });
     expect(creativeSignature(a)).toBe(creativeSignature(b));
   });
+
+  it('collapses ads that differ only by per-ad landing-URL tracking params', () => {
+    // The Duolingo "100 ads → 100 creatives" cause: identical creative, unique
+    // utm/fbclid on each delivery.
+    const a = ad({ adArchiveId: '1', headline: 'Learn a language', landingPageUrl: 'https://duolingo.com/super?utm_source=fb&fbclid=AAA&ad_id=1' });
+    const b = ad({ adArchiveId: '2', headline: 'Learn a language', landingPageUrl: 'https://duolingo.com/super?utm_source=ig&fbclid=BBB&ad_id=2' });
+    const c = ad({ adArchiveId: '3', headline: 'Learn a language', landingPageUrl: 'https://duolingo.com/super/' });
+    expect(creativeSignature(a)).toBe(creativeSignature(b));
+    expect(creativeSignature(a)).toBe(creativeSignature(c)); // trailing slash normalized too
+  });
+
+  it('still separates genuinely different landing pages', () => {
+    const a = ad({ adArchiveId: '1', headline: 'H', landingPageUrl: 'https://duolingo.com/super?utm=x' });
+    const b = ad({ adArchiveId: '2', headline: 'H', landingPageUrl: 'https://duolingo.com/max?utm=x' });
+    expect(creativeSignature(a)).not.toBe(creativeSignature(b));
+  });
+
+  it('collapses 100 tracking-param variants into 1 creative (the Duolingo bug)', () => {
+    const ads = Array.from({ length: 100 }, (_, i) =>
+      analyzed(ad({ adArchiveId: String(i), headline: 'Duolingo — Learn free', landingPageUrl: `https://duolingo.com/?utm_content=${i}&fbclid=x${i}` })),
+    );
+    const groups = groupCreatives(ads);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.duplicateCount).toBe(100);
+  });
 });
 
 describe('groupCreatives', () => {
