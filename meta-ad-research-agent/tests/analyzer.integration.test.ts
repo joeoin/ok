@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createLlmClient } from '../src/analyzer/llm-client.js';
 import { AdAnalyzer } from '../src/analyzer/ad-analyzer.js';
 import { generateCompanyReport } from '../src/reporting/report-generator.js';
+import { groupCreatives } from '../src/analyzer/creative-grouper.js';
+import { computeAggregates } from '../src/analyzer/aggregate.js';
 import { extractAds } from '../src/parser/ad-parser.js';
 import { legacyPayload } from './fixtures.js';
 
@@ -28,11 +30,11 @@ const ANALYSIS_JSON = {
 
 const REPORT_JSON = {
   executiveSummary: 'Savings-led strategy.',
-  messagingStrategy: 'm', brandPositioning: 'b', primaryOffers: 'p',
-  recurringHooks: 'r', creativeTrends: 'c', audienceStrategy: 'a',
-  funnelStrategy: 'f', copywritingPatterns: 'cp', ctaAnalysis: 'cta',
-  strengths: 's', weaknesses: 'w', potentialOpportunities: 'po',
-  recommendations: 'rec',
+  biggestStrategicInsight: 'bi', companyPositioning: 'cp', messagingStrategy: 'm',
+  customerPsychology: 'psy', creativeWinners: 'cw', creativeBreakdown: 'cb',
+  hookDistribution: 'hd', offerDistribution: 'od', funnelStrategy: 'f',
+  competitiveWeaknesses: 'w', opportunities: 'o', counterStrategy: 'cs',
+  actionItems: 'ai',
 };
 
 /** Minimal OpenAI-compatible /chat/completions mock. */
@@ -48,7 +50,8 @@ describe('AdAnalyzer with a mock OpenAI-compatible server', () => {
       req.on('end', () => {
         requests++;
         const parsed = JSON.parse(body);
-        const isReport = String(parsed.messages?.[0]?.content ?? '').includes('company-wide analysis');
+        const systemMsg = String(parsed.messages?.[0]?.content ?? '');
+        const isReport = systemMsg.includes('executive briefing');
         const content = JSON.stringify(isReport ? REPORT_JSON : ANALYSIS_JSON);
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ choices: [{ message: { content } }] }));
@@ -81,9 +84,12 @@ describe('AdAnalyzer with a mock OpenAI-compatible server', () => {
       pageId: '111222333444', name: 'Acme Solar', category: null,
       likes: null, verification: null, imageUri: null, country: null,
     };
-    const { report, error } = await generateCompanyReport(llm, advertiser, analyzed);
+    const groups = groupCreatives(analyzed, { asOf: '2026-07-16' });
+    const aggregates = computeAggregates(groups);
+    const { report, error } = await generateCompanyReport(llm, advertiser, groups, aggregates, 3);
     expect(error).toBeNull();
     expect(report?.executiveSummary).toBe('Savings-led strategy.');
+    expect(report?.counterStrategy).toBe('cs');
     expect(requests).toBeGreaterThanOrEqual(2);
   });
 

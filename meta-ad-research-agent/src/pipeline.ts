@@ -1,15 +1,19 @@
 import type { AppConfig } from './config.js';
-import type { AdvertiserPage, ResearchResult } from './types.js';
+import type { AdvertiserPage, AdvertiserResolutionInfo, ResearchResult } from './types.js';
 import { BrowserManager } from './browser/browser-manager.js';
 import { AdLibraryScraper } from './scraper/ad-library-scraper.js';
 import { AdAnalyzer } from './analyzer/ad-analyzer.js';
 import { createLlmClient } from './analyzer/llm-client.js';
+import { groupCreatives } from './analyzer/creative-grouper.js';
+import { computeAggregates } from './analyzer/aggregate.js';
+import { computeReliability } from './analyzer/reliability.js';
 import { generateCompanyReport } from './reporting/report-generator.js';
 import { exportCsv } from './reporting/csv-exporter.js';
 import { writeMarkdownReport } from './reporting/markdown-report.js';
 import { AssetStore } from './storage/asset-store.js';
 import { saveResultJson } from './storage/result-store.js';
 import { resolveAdvertiser, type ScoredCandidate } from './resolver/advertiser-resolver.js';
+import type { AdvertiserCache } from './resolver/advertiser-cache.js';
 import { runTimestamp } from './utils/fs.js';
 import { selectFromList } from './utils/select.js';
 import { createLogger } from './utils/logger.js';
@@ -25,6 +29,8 @@ export interface PipelineHooks {
   /** Runs right after the browser starts — for route mocking in tests, or
    * injecting cookies/consent state in future integrations. */
   onBrowserStarted?: (browser: BrowserManager) => Promise<void>;
+  /** Optional historical advertiser cache (persisted across runs). */
+  cache?: AdvertiserCache;
 }
 
 /**
@@ -55,7 +61,7 @@ export async function runResearch(
           'Check the spelling, or try a different AD_LIBRARY_COUNTRY.',
       );
     }
-    const advertiser = await chooseAdvertiser(query, advertisers);
+    const { advertiser, resolution } = await chooseAdvertiser(query, advertisers, hooks.cache);
     log.info(`Researching advertiser: ${advertiser.name} (page ${advertiser.pageId})`);
 
     // Step 2 — collect every active ad.
@@ -84,22 +90,54 @@ export async function runResearch(
     const analyzer = new AdAnalyzer(llm, config.llm.concurrency);
     const analyzedAds = await analyzer.analyzeAll(ads);
 
-    // Step 5 — company-wide synthesis.
-    const { report, error: reportError } = await generateCompanyReport(llm, advertiser, analyzedAds);
+    // Step 5 — deduplicate into creative groups (the real unit of analysis).
+    const collectedAt = new Date().toISOString();
+    const creativeGroups = groupCreatives(analyzedAds, { asOf: collectedAt });
+    const aggregates = computeAggregates(creativeGroups);
+    log.info(`Collapsed ${analyzedAds.length} ads → ${creativeGroups.length} unique creatives`);
+
+    // Step 6 — executive briefing from deduplicated creatives.
+    const estimatedActiveAds = scraper.lastEstimatedTotal ?? null;
+    const { report, error: reportError } = await generateCompanyReport(
+      llm,
+      advertiser,
+      creativeGroups,
+      aggregates,
+      estimatedActiveAds,
+    );
+
+    // Step 7 — reliability scoring.
+    const reliability = computeReliability({
+      ads: analyzedAds,
+      groups: creativeGroups,
+      advertiserConfidencePct: resolution.confidencePct,
+      estimatedPopulation: estimatedActiveAds,
+      dataSource: 'Meta Ad Library — browser scraper (public data only)',
+      analysisEnabled: config.llm.provider !== 'none',
+    });
 
     const result: ResearchResult = {
       advertiser,
       searchQuery: query,
       searchCountry: config.scraper.country,
-      collectedAt: new Date().toISOString(),
+      collectedAt,
       ads: analyzedAds,
+      creativeGroups,
       report,
       reportError,
+      reliability,
+      advertiserResolution: resolution,
+      estimatedActiveAds,
     };
 
-    // Outputs — CSV, JSON, Markdown.
+    // Persist the resolution so future runs skip the ambiguity.
+    if (hooks.cache && advertiser.pageId) {
+      hooks.cache.remember(query, { pageId: advertiser.pageId, name: advertiser.name }, collectedAt);
+    }
+
+    // Outputs — CSV (deduped creatives), JSON, Markdown.
     const files = {
-      csv: await exportCsv(store, analyzedAds),
+      csv: await exportCsv(store, creativeGroups),
       json: await saveResultJson(store, result),
       markdown: await writeMarkdownReport(store, result),
     };
@@ -115,8 +153,17 @@ export async function runResearch(
  * - ambiguous / franchise / ties  -> present a ranked, confidence-labeled choice
  * - only impersonators/noise      -> refuse (never analyze the wrong company)
  */
-async function chooseAdvertiser(query: string, advertisers: AdvertiserPage[]): Promise<AdvertiserPage> {
-  const decision = resolveAdvertiser(query, advertisers);
+interface ChosenAdvertiser {
+  advertiser: AdvertiserPage;
+  resolution: AdvertiserResolutionInfo;
+}
+
+async function chooseAdvertiser(
+  query: string,
+  advertisers: AdvertiserPage[],
+  cache?: AdvertiserCache,
+): Promise<ChosenAdvertiser> {
+  const decision = resolveAdvertiser(query, advertisers, cache ? { cache } : {});
 
   if (decision.kind === 'refuse') {
     throw new Error(decision.reason);
@@ -125,16 +172,25 @@ async function chooseAdvertiser(query: string, advertisers: AdvertiserPage[]): P
   if (decision.kind === 'accept') {
     log.info(
       `Matched "${query}" → ${decision.chosen.name} ` +
-        `(confidence: ${decision.candidate.confidence}, score ${decision.candidate.score.toFixed(2)}; ` +
-        `${decision.candidate.reasons.join(', ')})`,
+        `(confidence ${decision.candidate.confidencePct}%; ${decision.candidate.reasons.join(', ')})`,
     );
-    return decision.chosen;
+    return {
+      advertiser: decision.chosen,
+      resolution: {
+        confidencePct: decision.candidate.confidencePct,
+        method: 'auto-accepted',
+        reasons: decision.candidate.reasons,
+      },
+    };
   }
 
+  if (decision.franchisePrefix) {
+    log.info(`"${query}" looks like a franchise ("${decision.franchisePrefix}") — asking which page to research.`);
+  }
   const index = await selectFromList(
     `Multiple advertisers could match "${query}" — which one should I research?`,
     decision.candidates.map((c: ScoredCandidate) => ({
-      label: `${c.page.name}  [${c.confidence} match]`,
+      label: `${c.page.name}  [${c.confidencePct}% match]`,
       detail: [
         c.page.category,
         c.page.verification?.toUpperCase().includes('VERIF') ? 'verified' : null,
@@ -145,5 +201,9 @@ async function chooseAdvertiser(query: string, advertisers: AdvertiserPage[]): P
         .join(', '),
     })),
   );
-  return decision.candidates[index]!.page;
+  const chosen = decision.candidates[index]!;
+  return {
+    advertiser: chosen.page,
+    resolution: { confidencePct: chosen.confidencePct, method: 'user-selected', reasons: chosen.reasons },
+  };
 }

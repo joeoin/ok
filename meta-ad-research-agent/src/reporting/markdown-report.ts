@@ -1,17 +1,18 @@
 import path from 'node:path';
-import type { AnalyzedAd, ResearchResult } from '../types.js';
+import type { CompanyReport, CreativeGroup, ResearchResult } from '../types.js';
 import type { AssetStore } from '../storage/asset-store.js';
+import { computeAggregates, type Distribution } from '../analyzer/aggregate.js';
+import { summarizeCreatives } from '../analyzer/creative-grouper.js';
 import { writeTextFile } from '../utils/fs.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('markdown');
 
 const NA = '_Not Available_';
-
 const show = (v: string | null | undefined): string => (v && v.trim() !== '' ? v : NA);
 const showList = (v: string[] | undefined): string => (v && v.length ? v.join(', ') : NA);
 
-/** Render the full research report as Markdown. Returns the file path. */
+/** Render the executive briefing as Markdown. Returns the file path. */
 export async function writeMarkdownReport(store: AssetStore, result: ResearchResult): Promise<string> {
   const filePath = path.join(store.dirFor('reports'), 'report.md');
   await writeTextFile(filePath, renderMarkdownReport(result));
@@ -20,128 +21,176 @@ export async function writeMarkdownReport(store: AssetStore, result: ResearchRes
 }
 
 export function renderMarkdownReport(result: ResearchResult): string {
-  const { advertiser, ads, report } = result;
-  const active = ads.filter((a) => a.ad.status === 'active').length;
-  const byType = countBy(ads, (a) => a.ad.creativeType);
-  const byPlatform = countBy(
-    ads.flatMap((a) => (a.ad.platforms.length ? a.ad.platforms : ['unknown'])),
-    (p) => p,
-  );
+  const { advertiser, creativeGroups, report, reliability } = result;
+  const summary = summarizeCreatives(creativeGroups);
+  const agg = computeAggregates(creativeGroups);
 
   const lines: string[] = [
-    `# Meta Ad Library Research: ${advertiser.name}`,
+    `# Competitive Intelligence Briefing: ${advertiser.name}`,
     '',
-    `> Generated ${result.collectedAt} · Search query: "${result.searchQuery}" · Country scope: ${result.searchCountry}`,
-    `> Source: Meta Ad Library (public data only). Spend, performance, and targeting data are not exposed by the Ad Library and are therefore not included.`,
+    `> Generated ${result.collectedAt} · Query "${result.searchQuery}" · Country scope: ${result.searchCountry}`,
+    '> Source: Meta Ad Library (public data only). Spend, reach, CTR, conversions, and audience targeting are not exposed and are never estimated.',
     '',
-    '## Overview',
+    ...reliabilityPanel(result),
     '',
-    `| Field | Value |`,
-    `| --- | --- |`,
-    `| Advertiser | ${advertiser.name} |`,
-    `| Page ID | ${advertiser.pageId} |`,
-    `| Page category | ${show(advertiser.category)} |`,
-    `| Verification | ${show(advertiser.verification)} |`,
-    `| Ads collected | ${ads.length} (${active} active) |`,
-    `| Creative mix | ${formatCounts(byType)} |`,
-    `| Platforms | ${formatCounts(byPlatform)} |`,
+    ...dedupHeadline(summary.totalAds, summary.uniqueCreatives, summary.topCreative),
     '',
   ];
 
+  // The 14-section executive briefing, in order.
   if (report) {
     lines.push(
-      ...section('Executive Summary', report.executiveSummary),
-      ...section('Messaging Strategy', report.messagingStrategy),
-      ...section('Brand Positioning', report.brandPositioning),
-      ...section('Primary Offers', report.primaryOffers),
-      ...section('Recurring Hooks', report.recurringHooks),
-      ...section('Creative Trends', report.creativeTrends),
-      ...section('Audience Strategy', report.audienceStrategy),
-      ...section('Funnel Strategy', report.funnelStrategy),
-      ...section('Copywriting Patterns', report.copywritingPatterns),
-      ...section('CTA Analysis', report.ctaAnalysis),
-      ...section('Strengths', report.strengths),
-      ...section('Weaknesses', report.weaknesses),
-      ...section('Potential Opportunities', report.potentialOpportunities),
-      ...section('Recommendations', report.recommendations),
+      ...section('1. Executive Summary', report.executiveSummary),
+      ...section('2. Biggest Strategic Insight', report.biggestStrategicInsight),
+      ...section('3. Company Positioning', report.companyPositioning),
+      ...section('4. Messaging Strategy', report.messagingStrategy),
+      ...section('5. Customer Psychology', report.customerPsychology),
+      ...section('6. Creative Winners', report.creativeWinners),
+      ...creativeWinnersTable(creativeGroups),
+      ...section('7. Creative Breakdown', report.creativeBreakdown),
+      ...distributionSection('8. Hook Distribution', report.hookDistribution, agg.hooks),
+      ...distributionSection('9. Offer Distribution', report.offerDistribution, agg.offers),
+      ...distributionSection('10. Funnel Strategy', report.funnelStrategy, agg.funnelStages),
+      ...section('11. Competitive Weaknesses', report.competitiveWeaknesses),
+      ...section('12. Opportunities', report.opportunities),
+      ...section('13. Counter Strategy', report.counterStrategy),
+      ...section('14. Action Items', report.actionItems),
     );
   } else {
+    // No AI report: still deliver the data-driven briefing.
     lines.push(
       '## Company-Wide Analysis',
       '',
-      `_Not generated_: ${result.reportError ?? 'unknown reason'}`,
+      `_AI narrative not generated_: ${result.reportError ?? 'unknown reason'}. The data-driven sections below are still complete.`,
       '',
+      ...creativeWinnersTable(creativeGroups),
+      ...distributionSection('Hook Distribution', null, agg.hooks),
+      ...distributionSection('Offer Distribution', null, agg.offers),
+      ...distributionSection('Funnel Strategy', null, agg.funnelStages),
+      ...distributionSection('Format Mix', null, agg.formats),
     );
   }
 
-  lines.push('## Ad-by-Ad Breakdown', '');
-  ads.forEach((item, i) => lines.push(...renderAd(item, i + 1)));
+  lines.push('## Appendix — Creative-by-Creative Breakdown', '');
+  creativeGroups.forEach((g, i) => lines.push(...renderCreative(g, i + 1)));
 
   return lines.join('\n');
 }
 
-function section(title: string, body: string): string[] {
-  return [`## ${title}`, '', body.trim() || NA, ''];
+function reliabilityPanel(result: ResearchResult): string[] {
+  const r = result.reliability;
+  const res = result.advertiserResolution;
+  const bar = (n: number) => `${n}/100`;
+  const lines = [
+    '## Reliability',
+    '',
+    '| Signal | Score |',
+    '| --- | --- |',
+    `| **Overall confidence** | **${bar(r.overall)}** |`,
+    `| Advertiser confidence | ${bar(r.advertiserConfidence)} (${res.method}) |`,
+    `| Data completeness | ${bar(r.dataCompleteness)} |`,
+    `| Coverage | ${bar(r.coverage)} |`,
+    `| Creative coverage | ${bar(r.creativeCoverage)} |`,
+    `| Data source | ${r.dataSource} |`,
+    '',
+  ];
+  if (r.missingDataExplanations.length) {
+    lines.push('**What limits this report:**', '');
+    for (const e of r.missingDataExplanations) lines.push(`- ${e}`);
+    lines.push('');
+  }
+  return lines;
 }
 
-function renderAd(item: AnalyzedAd, n: number): string[] {
-  const { ad, analysis } = item;
-  const title = ad.headline ?? (ad.adText ? ad.adText.slice(0, 60).replace(/\s+/g, ' ') + '…' : `Ad ${ad.adArchiveId}`);
+function dedupHeadline(totalAds: number, unique: number, top: CreativeGroup | null): string[] {
+  const lines = [
+    '## At a Glance',
+    '',
+    `**${totalAds} ads → ${unique} unique creatives.**`,
+  ];
+  if (top) {
+    lines.push(
+      '',
+      `**Top creative:** "${show(top.headline)}" — ${top.duplicateCount} duplicate ads` +
+        (top.estimatedRuntimeDays !== null ? `, ~${top.estimatedRuntimeDays} days running` : '') +
+        `. Duplication + longevity make this the advertiser's most-backed message.`,
+    );
+  }
+  return lines;
+}
+
+function section(title: string, body: string): string[] {
+  return [`## ${title}`, '', (body ?? '').trim() || NA, ''];
+}
+
+function distributionSection(title: string, body: string | null, dist: Distribution[]): string[] {
+  const lines = [`## ${title}`, ''];
+  if (body) lines.push(body.trim() || NA, '');
+  if (dist.length) {
+    lines.push('| Item | Ads | Creatives | Share |', '| --- | --- | --- | --- |');
+    for (const d of dist.slice(0, 12)) lines.push(`| ${d.label} | ${d.ads} | ${d.creatives} | ${d.adSharePct}% |`);
+    lines.push('');
+  } else {
+    lines.push('_Not determinable from public data._', '');
+  }
+  return lines;
+}
+
+function creativeWinnersTable(groups: CreativeGroup[]): string[] {
+  if (groups.length === 0) return [];
+  const lines = [
+    '| # | Creative | Ads | Runtime | Type |',
+    '| --- | --- | --- | --- | --- |',
+  ];
+  groups.slice(0, 10).forEach((g, i) => {
+    const rt = g.estimatedRuntimeDays !== null ? `${g.estimatedRuntimeDays}d` : '?';
+    lines.push(`| ${i + 1} | ${truncate(show(g.headline), 60)} | ${g.duplicateCount} | ${rt} | ${g.creativeType} |`);
+  });
+  lines.push('');
+  return lines;
+}
+
+function renderCreative(g: CreativeGroup, n: number): string[] {
+  const rep = g.representative;
+  const title = g.headline ?? (rep.adText ? rep.adText.slice(0, 60).replace(/\s+/g, ' ') + '…' : g.creativeId);
   const lines = [
     `### ${n}. ${title}`,
     '',
-    `- **Library ID**: [${ad.adArchiveId}](${ad.adLibraryUrl})`,
-    `- **Status**: ${ad.status} · **Type**: ${ad.creativeType} · **Platforms**: ${showList(ad.platforms)}`,
-    `- **Running since**: ${show(ad.startDate)}`,
-    `- **CTA**: ${show(ad.ctaText)} → ${show(ad.landingPageUrl)}`,
+    `- **Creative ID**: ${g.creativeId} · **${g.duplicateCount} duplicate ad(s)**`,
+    `- **Type**: ${g.creativeType} · **Platforms**: ${showList(g.platforms)} · **Runtime**: ${g.estimatedRuntimeDays !== null ? g.estimatedRuntimeDays + ' days' : NA}`,
+    `- **First seen**: ${show(g.firstSeen)} · **Last seen**: ${show(g.lastSeen)}`,
+    `- **Countries**: ${showList(g.countries)} · **Languages**: ${showList(g.languages)}`,
+    `- **Example ad**: [${rep.adArchiveId}](${rep.adLibraryUrl})`,
   ];
-  if (ad.screenshotPath) lines.push(`- **Screenshot**: \`${ad.screenshotPath}\``);
-  if (ad.adText) {
-    lines.push('', '> ' + ad.adText.slice(0, 500).replace(/\n/g, '\n> '));
-  }
-  if (analysis) {
+  if (rep.screenshotPath) lines.push(`- **Screenshot**: \`${rep.screenshotPath}\``);
+  if (rep.adText) lines.push('', '> ' + rep.adText.slice(0, 500).replace(/\n/g, '\n> '));
+
+  const a = g.analysis;
+  if (a) {
     lines.push(
       '',
       '| Dimension | Finding |',
       '| --- | --- |',
-      `| Hook | ${show(analysis.hook)} |`,
-      `| Offer | ${show(analysis.offer)} |`,
-      `| CTA | ${show(analysis.cta)} |`,
-      `| Pain point | ${show(analysis.customerPainPoint)} |`,
-      `| Desired outcome | ${show(analysis.desiredOutcome)} |`,
-      `| Audience (implied) | ${show(analysis.audience)} |`,
-      `| Funnel stage | ${show(analysis.funnelStage)} |`,
-      `| Emotional triggers | ${showList(analysis.emotionalTriggers)} |`,
-      `| Framework | ${show(analysis.copywritingFramework)} |`,
-      `| Angle | ${show(analysis.marketingAngle)} |`,
-      `| Creative style | ${show(analysis.creativeStyle)} |`,
-      `| Trust signals | ${showList(analysis.trustSignals)} |`,
-      `| Social proof | ${show(analysis.socialProof)} |`,
-      `| Urgency | ${show(analysis.urgency)} |`,
-      `| Scarcity | ${show(analysis.scarcity)} |`,
-      `| Objection handling | ${show(analysis.objectionHandling)} |`,
-      `| Differentiators | ${showList(analysis.differentiators)} |`,
+      `| Hook | ${show(a.hook)} |`,
+      `| Offer | ${show(a.offer)} |`,
+      `| Pain point | ${show(a.customerPainPoint)} |`,
+      `| Desired outcome | ${show(a.desiredOutcome)} |`,
+      `| Audience (implied) | ${show(a.audience)} |`,
+      `| Funnel stage | ${show(a.funnelStage)} |`,
+      `| Emotional triggers | ${showList(a.emotionalTriggers)} |`,
+      `| Framework | ${show(a.copywritingFramework)} |`,
+      `| Angle | ${show(a.marketingAngle)} |`,
+      `| Trust signals | ${showList(a.trustSignals)} |`,
+      `| Urgency | ${show(a.urgency)} |`,
+      `| Objection handling | ${show(a.objectionHandling)} |`,
     );
-  } else {
-    lines.push('', `_AI analysis unavailable_: ${item.analysisError ?? 'unknown'}`);
+  } else if (g.analysisError) {
+    lines.push('', `_AI analysis unavailable_: ${g.analysisError}`);
   }
   lines.push('');
   return lines;
 }
 
-function countBy<T>(items: T[], key: (item: T) => string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    const k = key(item);
-    counts.set(k, (counts.get(k) ?? 0) + 1);
-  }
-  return counts;
-}
-
-function formatCounts(counts: Map<string, number>): string {
-  if (counts.size === 0) return NA;
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(', ');
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + '…' : s;
 }

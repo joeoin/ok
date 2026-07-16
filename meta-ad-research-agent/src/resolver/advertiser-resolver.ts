@@ -1,70 +1,85 @@
 import type { AdvertiserPage } from '../types.js';
+import { domainParts, similarity } from '../utils/similarity.js';
+import { normalizeText } from '../utils/text.js';
+import type { AdvertiserCache } from './advertiser-cache.js';
 
 /**
- * Advertiser resolution + confidence gating.
+ * Smart Advertiser Resolution with confidence gating.
  *
  * Validation finding (2026-07-16, 18 live companies): keyword search on the Ad
- * Library surfaces the correct advertiser only ~22% of the time — the rest is
+ * Library surfaces the correct advertiser only ~22% of the time — the rest are
  * dropshippers, affiliates, coincidental token matches ("Notion" -> "Notion
- * Pants") and non-English spam. Blindly analyzing the top result profiles the
+ * Pants") and non-English spam. Analyzing the top result blindly profiles the
  * WRONG company, which is worse than returning nothing.
  *
- * This module scores candidate pages against the query, filters junk, and
- * decides whether to auto-accept, ask the user, or refuse — so the pipeline
- * never silently researches an impersonator.
+ * Guiding principle: accuracy beats convenience. A customer must never receive
+ * a report about the wrong advertiser. So the resolver returns a calibrated
+ * confidence (0–1) and gates hard:
+ *   confidence > 0.95  -> auto-accept
+ *   0.70 – 0.95        -> present ranked choices
+ *   < 0.70             -> refuse and explain
+ *
+ * Signals: exact/prefix/substring name match, fuzzy (edit-distance) match,
+ * website/domain match, category/industry match, verified-page scoring,
+ * parent/subsidiary ("AG1 by Athletic Greens"), franchise detection, and a
+ * historical resolution cache.
  */
 
 export type Confidence = 'high' | 'medium' | 'low' | 'none';
 
 export interface ScoredCandidate {
   page: AdvertiserPage;
+  /** Calibrated confidence in [0, 1]. */
   score: number;
+  /** Convenience percentage for display (0–100). */
+  confidencePct: number;
   confidence: Confidence;
   reasons: string[];
 }
 
 export type ResolutionDecision =
   | { kind: 'accept'; chosen: AdvertiserPage; candidate: ScoredCandidate }
-  | { kind: 'disambiguate'; candidates: ScoredCandidate[] }
+  | { kind: 'disambiguate'; candidates: ScoredCandidate[]; franchisePrefix: string | null }
   | { kind: 'refuse'; reason: string; nearMisses: ScoredCandidate[] };
 
-export interface ResolverOptions {
-  /** Min score to auto-accept without asking (default 0.82). */
-  acceptThreshold?: number;
-  /** Min lead over the runner-up to auto-accept a single winner (default 0.15). */
-  leadThreshold?: number;
-  /** Below this, a candidate is not a plausible match at all (default 0.34). */
-  minPlausibleScore?: number;
-  /** Max candidates to present when disambiguating (default 8). */
-  maxChoices?: number;
+/** Optional context that sharpens matching (from the caller / a brand record). */
+export interface ResolverHint {
+  /** Known advertiser website/domain, e.g. "solace.health". */
+  website?: string;
+  /** Expected industry/category, e.g. "Health" or "Software". */
+  category?: string;
 }
 
-const DEFAULTS: Required<ResolverOptions> = {
-  acceptThreshold: 0.82,
-  leadThreshold: 0.15,
-  minPlausibleScore: 0.34,
+export interface ResolverOptions {
+  /** Strictly greater than this auto-accepts (default 0.95). */
+  acceptThreshold?: number;
+  /** At/above this we present choices; below this we refuse (default 0.70). */
+  reviewThreshold?: number;
+  /** Max candidates to present when disambiguating (default 8). */
+  maxChoices?: number;
+  hint?: ResolverHint;
+  cache?: AdvertiserCache;
+}
+
+const DEFAULTS = {
+  acceptThreshold: 0.95,
+  reviewThreshold: 0.7,
   maxChoices: 8,
-};
+} as const;
 
 /** Generic-brand tokens that must never carry a match on their own. */
 const STOPWORDS = new Set([
-  'the', 'inc', 'llc', 'co', 'company', 'official', 'shop', 'store', 'store',
-  'us', 'usa', 'app', 'io', 'com', 'hq', 'ltd', 'group', 'online', 'buy',
+  'the', 'inc', 'llc', 'co', 'company', 'official', 'shop', 'store',
+  'us', 'usa', 'app', 'io', 'com', 'hq', 'ltd', 'group', 'online', 'buy', 'by',
 ]);
 
-export function normalizeName(input: string): string {
-  return input
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
+/** Connective tokens that signal a sub-brand relationship ("X by Y"). */
+const SUBBRAND_CONNECTORS = new Set(['by', 'from', 'a', 'an']);
+
+export const normalizeName = normalizeText;
 
 export function tokenize(input: string): string[] {
-  return normalizeName(input)
-    .split(' ')
-    .filter((t) => t.length > 0);
+  return normalizeName(input).split(' ').filter((t) => t.length > 0);
 }
 
 function contentTokens(tokens: string[]): string[] {
@@ -72,40 +87,56 @@ function contentTokens(tokens: string[]): string[] {
   return content.length > 0 ? content : tokens;
 }
 
+function toConfidence(score: number): Confidence {
+  if (score > 0.95) return 'high';
+  if (score >= 0.7) return 'medium';
+  if (score >= 0.4) return 'low';
+  return 'none';
+}
+
 /**
- * Score one candidate page name against the query in [0, 1].
- * Deterministic and explainable (returns the reasons used).
+ * Score one candidate against the query + optional hint. Deterministic and
+ * explainable. Returns confidence in [0, 1].
  */
-export function scoreCandidate(query: string, page: AdvertiserPage): ScoredCandidate {
+export function scoreCandidate(query: string, page: AdvertiserPage, hint: ResolverHint = {}): ScoredCandidate {
   const reasons: string[] = [];
   const qNorm = normalizeName(query);
   const nNorm = normalizeName(page.name);
   const qTokens = contentTokens(tokenize(query));
-  const nTokens = tokenize(page.name);
-  const nTokenSet = new Set(nTokens);
+  const nTokensAll = tokenize(page.name);
+  const nTokenSet = new Set(nTokensAll);
 
   let score = 0;
 
+  // --- name relationship (the primary signal) ---
   if (nNorm === qNorm) {
-    score = 1;
+    score = 0.97;
     reasons.push('exact name match');
+  } else if (isSubBrandOf(nTokensAll, qTokens)) {
+    // "AG1 by Athletic Greens" for query "Athletic Greens": real, but a
+    // sub-brand — worth surfacing, not silently auto-accepting.
+    score = 0.86;
+    reasons.push('sub-brand of the queried company');
   } else if (nNorm.startsWith(qNorm + ' ') || nNorm.endsWith(' ' + qNorm)) {
-    score = 0.9;
+    score = 0.84;
     reasons.push('name begins/ends with the query');
   } else if (nNorm.includes(qNorm) && qNorm.length >= 4) {
-    score = 0.78;
+    score = 0.74;
     reasons.push('name contains the full query phrase');
   } else {
-    // Token-overlap fallback: fraction of query tokens present in the name.
+    const sim = similarity(qNorm, nNorm);
     const matched = qTokens.filter((t) => nTokenSet.has(t));
     const coverage = qTokens.length ? matched.length / qTokens.length : 0;
-    if (matched.length === 0) {
+    if (sim >= 0.88 && Math.abs(qNorm.length - nNorm.length) <= 2) {
+      // Typo / spacing variant, e.g. "monday com" vs "monday.com".
+      score = 0.9 * sim;
+      reasons.push(`fuzzy name match (${Math.round(sim * 100)}% similar)`);
+    } else if (matched.length === 0) {
       reasons.push('no shared brand tokens (likely coincidental match)');
     } else {
-      score = 0.34 + 0.42 * coverage; // 1 token of 1 -> 0.76; partial -> lower
+      score = 0.34 + 0.34 * coverage; // 1 token of 1 -> 0.68
       reasons.push(`shares ${matched.length}/${qTokens.length} query token(s)`);
-      // Penalize noisy names padded with extra tokens (dropshipper style).
-      const extra = nTokens.filter((t) => !STOPWORDS.has(t)).length - matched.length;
+      const extra = nTokensAll.filter((t) => !STOPWORDS.has(t)).length - matched.length;
       if (extra >= 3) {
         score -= 0.12;
         reasons.push('name padded with unrelated words');
@@ -113,29 +144,48 @@ export function scoreCandidate(query: string, page: AdvertiserPage): ScoredCandi
     }
   }
 
-  // Signal boosts (page-shaped candidates are more trustworthy than ad-derived).
+  // --- website / domain match (strong corroboration) ---
+  const hintDomain = hint.website ? domainParts(hint.website) : null;
+  const pageDomain = page.website ? domainParts(page.website) : null;
+  if (hintDomain && pageDomain && hintDomain.host === pageDomain.host) {
+    score = Math.max(score, 0.9) + 0.08;
+    reasons.push('advertiser website matches');
+  } else if (hintDomain && nTokenSet.has(hintDomain.brand)) {
+    score += 0.05;
+    reasons.push('name matches expected domain brand');
+  }
+
+  // --- category / industry hint ---
+  if (hint.category && page.category && normalizeName(page.category).includes(normalizeName(hint.category))) {
+    score += 0.05;
+    reasons.push('category matches expected industry');
+  }
+
+  // --- page-trust signals ---
   if (page.verification && page.verification.toUpperCase().includes('VERIF')) {
     score += 0.08;
     reasons.push('verified page');
   }
   if (page.category) {
-    score += 0.03;
+    score += 0.02;
     reasons.push('has page category');
   }
   if ((page.likes ?? 0) >= 10_000) {
-    score += 0.03;
+    score += 0.02;
     reasons.push('established audience');
   }
 
   score = Math.max(0, Math.min(1, score));
-  return { page, score, confidence: toConfidence(score), reasons };
+  return { page, score, confidencePct: Math.round(score * 100), confidence: toConfidence(score), reasons };
 }
 
-function toConfidence(score: number): Confidence {
-  if (score >= 0.82) return 'high';
-  if (score >= 0.6) return 'medium';
-  if (score >= 0.34) return 'low';
-  return 'none';
+/** "AG1 by Athletic Greens" contains query tokens after a sub-brand connector. */
+function isSubBrandOf(nameTokens: string[], queryContentTokens: string[]): boolean {
+  if (queryContentTokens.length === 0) return false;
+  const connectorIdx = nameTokens.findIndex((t) => SUBBRAND_CONNECTORS.has(t));
+  if (connectorIdx <= 0 || connectorIdx === nameTokens.length - 1) return false;
+  const tail = nameTokens.slice(connectorIdx + 1);
+  return queryContentTokens.every((t) => tail.includes(t));
 }
 
 /**
@@ -152,8 +202,8 @@ export function detectFranchise(candidates: ScoredCandidate[]): string | null {
 }
 
 /**
- * Rank candidates and decide what to do. Never returns a low-confidence pick
- * silently — that is the whole point.
+ * Rank candidates and decide: accept / disambiguate / refuse.
+ * Never returns a low-confidence pick silently.
  */
 export function resolveAdvertiser(
   query: string,
@@ -161,41 +211,71 @@ export function resolveAdvertiser(
   options: ResolverOptions = {},
 ): ResolutionDecision {
   const opts = { ...DEFAULTS, ...options };
+  const hint = opts.hint ?? {};
+
+  // Historical cache short-circuit: a previously confirmed mapping is trusted.
+  const cached = opts.cache?.get(query);
+  if (cached) {
+    const match = pages.find((p) => p.pageId === cached.pageId);
+    const page = match ?? {
+      pageId: cached.pageId,
+      name: cached.name,
+      category: null,
+      likes: null,
+      verification: null,
+      imageUri: null,
+      country: null,
+    };
+    return {
+      kind: 'accept',
+      chosen: page,
+      candidate: {
+        page,
+        score: 0.99,
+        confidencePct: 99,
+        confidence: 'high',
+        reasons: [`previously confirmed advertiser (cached ${cached.confirmedAt})`],
+      },
+    };
+  }
 
   // Dedupe by pageId, keep the best-scoring instance.
   const byId = new Map<string, ScoredCandidate>();
   for (const page of pages) {
-    const scored = scoreCandidate(query, page);
+    const scored = scoreCandidate(query, page, hint);
     const existing = byId.get(page.pageId);
     if (!existing || scored.score > existing.score) byId.set(page.pageId, scored);
   }
   const ranked = [...byId.values()].sort((a, b) => b.score - a.score);
 
-  const plausible = ranked.filter((c) => c.score >= opts.minPlausibleScore);
-  if (plausible.length === 0) {
+  const reviewable = ranked.filter((c) => c.score >= opts.reviewThreshold);
+  if (reviewable.length === 0) {
     return {
       kind: 'refuse',
       reason:
-        `No advertiser in the Ad Library confidently matches "${query}". ` +
-        'The results look like impersonators or coincidental keyword matches, ' +
-        'so nothing was analyzed. Try the exact page name, or supply the page ID.',
+        `No advertiser in the Ad Library confidently matches "${query}" ` +
+        `(best candidate ${ranked[0]?.confidencePct ?? 0}% < ${Math.round(opts.reviewThreshold * 100)}% threshold). ` +
+        'The results look like impersonators or coincidental keyword matches, so nothing was analyzed. ' +
+        'Try the exact page name, add the website/category, or supply the page ID.',
       nearMisses: ranked.slice(0, opts.maxChoices),
     };
   }
 
-  const [top, second] = plausible;
+  const franchisePrefix = detectFranchise(reviewable);
 
-  // Franchise: many same-prefix pages — always let the user choose scope.
-  const franchisePrefix = detectFranchise(plausible);
-  if (franchisePrefix && plausible.length >= 2) {
-    return { kind: 'disambiguate', candidates: plausible.slice(0, opts.maxChoices) };
+  // Franchise always asks — the user must choose corporate vs. a location.
+  if (franchisePrefix && reviewable.length >= 2) {
+    return { kind: 'disambiguate', candidates: reviewable.slice(0, opts.maxChoices), franchisePrefix };
   }
 
-  const lead = top!.score - (second?.score ?? 0);
-  if (top!.score >= opts.acceptThreshold && (!second || lead >= opts.leadThreshold)) {
-    return { kind: 'accept', chosen: top!.page, candidate: top! };
+  // Auto-accept ONLY when exactly one candidate clears the review bar and it is
+  // above the accept threshold. Two independently-plausible advertisers (e.g.
+  // "Solace" the clinic vs. "Solace Clothing") always go to disambiguation —
+  // an exact match on a common word is not proof it's the one the user meant.
+  const top = reviewable[0]!;
+  if (reviewable.length === 1 && top.score > opts.acceptThreshold) {
+    return { kind: 'accept', chosen: top.page, candidate: top };
   }
 
-  // Otherwise ambiguous enough to warrant a human choice.
-  return { kind: 'disambiguate', candidates: plausible.slice(0, opts.maxChoices) };
+  return { kind: 'disambiguate', candidates: reviewable.slice(0, opts.maxChoices), franchisePrefix: null };
 }

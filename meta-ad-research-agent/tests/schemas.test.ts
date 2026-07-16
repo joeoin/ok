@@ -60,6 +60,7 @@ describe('companyReportSchema', () => {
   it('fills missing sections with "Not Available"', () => {
     const parsed = companyReportSchema.parse({ executiveSummary: 'Summary here' });
     expect(parsed.executiveSummary).toBe('Summary here');
-    expect(parsed.weaknesses).toBe('Not Available');
+    expect(parsed.competitiveWeaknesses).toBe('Not Available');
+    expect(parsed.counterStrategy).toBe('Not Available');
   });
 });

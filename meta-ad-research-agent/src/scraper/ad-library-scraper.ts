@@ -18,6 +18,13 @@ export interface ScraperOptions {
 }
 
 export class AdLibraryScraper {
+  /**
+   * Estimated total active ads for the advertiser, when the page exposes a
+   * result count. Null when unknown — reliability scoring treats null coverage
+   * honestly (as not-measurable) rather than fabricating a number.
+   */
+  lastEstimatedTotal: number | null = null;
+
   constructor(
     private readonly browser: BrowserManager,
     private readonly options: ScraperOptions,

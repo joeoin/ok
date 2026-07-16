@@ -1,62 +1,91 @@
-import type { AdvertiserPage, AnalyzedAd } from '../types.js';
+import type { AdvertiserPage, CreativeGroup } from '../types.js';
+import type { Aggregates } from '../analyzer/aggregate.js';
 
-export const COMPANY_REPORT_SYSTEM_PROMPT = `You are a senior marketing strategist writing a competitor research report from Meta Ad Library data.
+export const COMPANY_REPORT_SYSTEM_PROMPT = `You are a senior strategy consultant (think McKinsey / Bain / BCG) writing a competitive-intelligence briefing from Meta Ad Library data.
 
-You will receive structured summaries of every active ad an advertiser is currently running. Synthesize them into a company-wide analysis.
+You receive DEDUPLICATED creatives (not raw ad IDs) with volume weights, plus pre-computed distributions. Write an executive briefing that a CMO would trust and a media buyer would act on.
 
-Ground every claim in the provided ads. Never invent spend, performance metrics, or targeting data — the Ad Library does not expose them. Where the data is too thin to support a section, write "Not enough public data to assess."
+HARD RULES — violating any of these makes the report worthless:
+- Ground EVERY claim in the provided creatives/numbers. Cite specifics (a hook line, a creative's duplicate count, a runtime, a distribution %). If you name a "winner", justify it with duplication or longevity from the data.
+- NO generic marketing advice. Every recommendation must reference an actual observation ("They repeat X in N% of ads and never address Y, so attack Z").
+- Never invent spend, reach, CTR, conversions, ROAS, or audience targeting — the Ad Library does not expose them. If something can't be determined, say "Not determinable from public data" and move on.
+- Signal over volume: lead with the single most important insight; cut filler.
 
-Respond with a single JSON object and nothing else, using exactly these keys (each value is a Markdown-formatted string of 1-4 paragraphs or a bullet list):
+Explicitly answer, across the sections: What is this company trying to accomplish? Why these creatives? What customer psychology are they exploiting? What objections are they overcoming? What messaging repeats? What appears to be winning (and why)? What appears to be failing or absent? If I competed against them tomorrow, exactly how would I attack them?
+
+Respond with a single JSON object and nothing else, using EXACTLY these keys (each a Markdown string, tight and specific):
 {
-  "executiveSummary": string,
+  "executiveSummary": string,           // 3-5 sentences: the whole picture
+  "biggestStrategicInsight": string,    // the one non-obvious thing worth the report's price
+  "companyPositioning": string,
   "messagingStrategy": string,
-  "brandPositioning": string,
-  "primaryOffers": string,
-  "recurringHooks": string,
-  "creativeTrends": string,
-  "audienceStrategy": string,
-  "funnelStrategy": string,
-  "copywritingPatterns": string,
-  "ctaAnalysis": string,
-  "strengths": string,
-  "weaknesses": string,
-  "potentialOpportunities": string,
-  "recommendations": string
+  "customerPsychology": string,         // pains, desires, emotional triggers being exploited
+  "creativeWinners": string,            // which creatives lead and WHY (duplication/longevity)
+  "creativeBreakdown": string,          // formats, themes, what's being tested
+  "hookDistribution": string,           // interpret the hook numbers provided
+  "offerDistribution": string,          // interpret the offer numbers provided
+  "funnelStrategy": string,             // awareness/consideration/conversion/retention mix + reading
+  "competitiveWeaknesses": string,      // gaps, unaddressed objections, over-reliance
+  "opportunities": string,              // whitespace an attacker could take
+  "counterStrategy": string,            // "If I competed tomorrow" — concrete plays tied to observations
+  "actionItems": string                 // a prioritized, numbered checklist
 }`;
 
+const truncate = (s: string | null, n: number): string => (s ? (s.length > n ? s.slice(0, n) + '…' : s) : '');
+
+function dist(label: string, items: { label: string; ads: number; creatives: number; adSharePct: number }[]): string {
+  if (items.length === 0) return `${label}: (none determinable)`;
+  const top = items.slice(0, 8).map((d) => `${d.label} — ${d.ads} ads / ${d.creatives} creatives (${d.adSharePct}%)`);
+  return `${label}:\n  ${top.join('\n  ')}`;
+}
+
 /**
- * Compact per-ad digest for the synthesis prompt. Keeps token usage bounded
- * even for large ad sets by truncating copy and capping the ad count.
+ * Compact, deduplicated digest for the synthesis prompt. Feeds the model real
+ * numbers (volume, runtime, distributions) so it grounds every claim.
  */
 export function buildCompanyReportUserPrompt(
   advertiser: AdvertiserPage,
-  ads: AnalyzedAd[],
-  maxAdsInPrompt = 150,
+  groups: CreativeGroup[],
+  aggregates: Aggregates,
+  estimatedPopulation: number | null,
+  maxCreativesInPrompt = 60,
 ): string {
-  const digest = ads.slice(0, maxAdsInPrompt).map(({ ad, analysis }, i) => {
-    const parts: string[] = [
-      `--- Ad ${i + 1} (ID ${ad.adArchiveId}) ---`,
-      `type=${ad.creativeType} platforms=${ad.platforms.join('/') || '?'} start=${ad.startDate ?? '?'} cta=${ad.ctaText ?? '?'}`,
-      `text: ${(ad.adText ?? '').slice(0, 400) || '(none)'}`,
+  const shown = groups.slice(0, maxCreativesInPrompt);
+  const digest = shown.map((g, i) => {
+    const a = g.analysis;
+    const parts = [
+      `#${i + 1} [${g.duplicateCount} ads, ${g.creativeType}, runtime ${g.estimatedRuntimeDays ?? '?'}d, platforms ${g.platforms.join('/') || '?'}]`,
+      `headline: ${truncate(g.headline, 140) || '(none)'}`,
     ];
-    if (ad.headline) parts.push(`headline: ${ad.headline.slice(0, 150)}`);
-    if (analysis) {
-      const a = analysis;
+    if (g.representative.adText) parts.push(`text: ${truncate(g.representative.adText, 300)}`);
+    if (g.representative.ctaText) parts.push(`cta: ${g.representative.ctaText}`);
+    if (a) {
       parts.push(
         `analysis: hook=${a.hook ?? '-'} | offer=${a.offer ?? '-'} | angle=${a.marketingAngle ?? '-'} | ` +
-          `funnel=${a.funnelStage ?? '-'} | audience=${a.audience ?? '-'} | framework=${a.copywritingFramework ?? '-'} | ` +
-          `triggers=${a.emotionalTriggers.join(',') || '-'}`,
+          `funnel=${a.funnelStage ?? '-'} | pain=${a.customerPainPoint ?? '-'} | triggers=${a.emotionalTriggers.join(',') || '-'}`,
       );
     }
-    return parts.join('\n');
+    return parts.join('\n   ');
   });
 
-  const omitted = ads.length - Math.min(ads.length, maxAdsInPrompt);
+  const omitted = groups.length - shown.length;
   return [
-    `Advertiser: ${advertiser.name} (page ID ${advertiser.pageId})`,
+    `Advertiser: ${advertiser.name} (page ${advertiser.pageId})`,
     `Category: ${advertiser.category ?? 'Not Available'}`,
-    `Total active ads collected: ${ads.length}${omitted > 0 ? ` (${omitted} omitted from this digest for length)` : ''}`,
+    `Estimated active ads: ${estimatedPopulation ?? 'unknown'} → collapsed to ${aggregates.uniqueCreatives} unique creatives (${aggregates.totalAds} ads sampled).`,
     '',
+    'DISTRIBUTIONS (volume-weighted):',
+    dist('Hooks', aggregates.hooks),
+    dist('Offers', aggregates.offers),
+    dist('Funnel stages', aggregates.funnelStages),
+    dist('Formats', aggregates.formats),
+    dist('CTAs', aggregates.ctas),
+    '',
+    `Longest-running creatives (proven-winner signal): ${
+      aggregates.longestRunning.map((g) => `"${truncate(g.headline, 40)}" ${g.estimatedRuntimeDays}d`).join('; ') || 'unknown'
+    }`,
+    '',
+    `DEDUPLICATED CREATIVES${omitted > 0 ? ` (top ${shown.length}; ${omitted} more omitted)` : ''}:`,
     ...digest,
   ].join('\n');
 }

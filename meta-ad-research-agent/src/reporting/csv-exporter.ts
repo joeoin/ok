@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { AnalyzedAd } from '../types.js';
+import type { CreativeGroup } from '../types.js';
 import type { AssetStore } from '../storage/asset-store.js';
 import { buildCsv } from '../utils/csv.js';
 import { writeTextFile } from '../utils/fs.js';
@@ -7,31 +7,30 @@ import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('csv');
 
+/** One row per DEDUPLICATED creative (not per ad ID). */
 export const CSV_COLUMNS = [
-  'adArchiveId',
+  'creativeId',
+  'duplicateCount',
   'advertiserName',
   'pageId',
-  'status',
-  'platforms',
-  'creativeType',
-  'displayFormat',
-  'adText',
   'headline',
+  'creativeType',
+  'platforms',
+  'primaryText',
   'description',
   'ctaText',
-  'ctaType',
   'landingPageUrl',
-  'startDate',
-  'endDate',
-  'searchCountry',
+  'firstSeen',
+  'lastSeen',
+  'estimatedRuntimeDays',
+  'countries',
   'languages',
-  'collationCount',
+  'exampleAdId',
   'adLibraryUrl',
   'screenshotPath',
   'assetUrls',
   'hook',
   'offer',
-  'analysisCta',
   'customerPainPoint',
   'desiredOutcome',
   'audience',
@@ -49,55 +48,54 @@ export const CSV_COLUMNS = [
   'analysisError',
 ];
 
-export function analyzedAdToCsvRow(item: AnalyzedAd): Record<string, unknown> {
-  const { ad, analysis } = item;
+export function creativeGroupToCsvRow(g: CreativeGroup): Record<string, unknown> {
+  const rep = g.representative;
+  const a = g.analysis;
   return {
-    adArchiveId: ad.adArchiveId,
-    advertiserName: ad.advertiserName,
-    pageId: ad.pageId || null,
-    status: ad.status,
-    platforms: ad.platforms,
-    creativeType: ad.creativeType,
-    displayFormat: ad.displayFormat,
-    adText: ad.adText,
-    headline: ad.headline,
-    description: ad.description,
-    ctaText: ad.ctaText,
-    ctaType: ad.ctaType,
-    landingPageUrl: ad.landingPageUrl,
-    startDate: ad.startDate,
-    endDate: ad.endDate,
-    searchCountry: ad.searchCountry,
-    languages: ad.languages,
-    collationCount: ad.collationCount,
-    adLibraryUrl: ad.adLibraryUrl,
-    screenshotPath: ad.screenshotPath,
-    assetUrls: ad.assets.map((a) => a.url ?? a.previewUrl).filter(Boolean),
-    hook: analysis?.hook ?? null,
-    offer: analysis?.offer ?? null,
-    analysisCta: analysis?.cta ?? null,
-    customerPainPoint: analysis?.customerPainPoint ?? null,
-    desiredOutcome: analysis?.desiredOutcome ?? null,
-    audience: analysis?.audience ?? null,
-    funnelStage: analysis?.funnelStage ?? null,
-    emotionalTriggers: analysis?.emotionalTriggers ?? [],
-    copywritingFramework: analysis?.copywritingFramework ?? null,
-    marketingAngle: analysis?.marketingAngle ?? null,
-    creativeStyle: analysis?.creativeStyle ?? null,
-    trustSignals: analysis?.trustSignals ?? [],
-    socialProof: analysis?.socialProof ?? null,
-    urgency: analysis?.urgency ?? null,
-    scarcity: analysis?.scarcity ?? null,
-    objectionHandling: analysis?.objectionHandling ?? null,
-    differentiators: analysis?.differentiators ?? [],
-    analysisError: item.analysisError,
+    creativeId: g.creativeId,
+    duplicateCount: g.duplicateCount,
+    advertiserName: rep.advertiserName,
+    pageId: rep.pageId || null,
+    headline: g.headline,
+    creativeType: g.creativeType,
+    platforms: g.platforms,
+    primaryText: rep.adText,
+    description: rep.description,
+    ctaText: rep.ctaText,
+    landingPageUrl: rep.landingPageUrl,
+    firstSeen: g.firstSeen,
+    lastSeen: g.lastSeen,
+    estimatedRuntimeDays: g.estimatedRuntimeDays,
+    countries: g.countries,
+    languages: g.languages,
+    exampleAdId: rep.adArchiveId,
+    adLibraryUrl: rep.adLibraryUrl,
+    screenshotPath: rep.screenshotPath,
+    assetUrls: rep.assets.map((x) => x.url ?? x.previewUrl).filter(Boolean),
+    hook: a?.hook ?? null,
+    offer: a?.offer ?? null,
+    customerPainPoint: a?.customerPainPoint ?? null,
+    desiredOutcome: a?.desiredOutcome ?? null,
+    audience: a?.audience ?? null,
+    funnelStage: a?.funnelStage ?? null,
+    emotionalTriggers: a?.emotionalTriggers ?? [],
+    copywritingFramework: a?.copywritingFramework ?? null,
+    marketingAngle: a?.marketingAngle ?? null,
+    creativeStyle: a?.creativeStyle ?? null,
+    trustSignals: a?.trustSignals ?? [],
+    socialProof: a?.socialProof ?? null,
+    urgency: a?.urgency ?? null,
+    scarcity: a?.scarcity ?? null,
+    objectionHandling: a?.objectionHandling ?? null,
+    differentiators: a?.differentiators ?? [],
+    analysisError: g.analysisError,
   };
 }
 
-/** One row per ad, scraped fields + analysis fields. Returns the file path. */
-export async function exportCsv(store: AssetStore, ads: AnalyzedAd[]): Promise<string> {
-  const rows = ads.map(analyzedAdToCsvRow);
-  const filePath = path.join(store.dirFor('exports'), 'ads.csv');
+/** One row per creative group (deduped). Returns the file path. */
+export async function exportCsv(store: AssetStore, groups: CreativeGroup[]): Promise<string> {
+  const rows = groups.map(creativeGroupToCsvRow);
+  const filePath = path.join(store.dirFor('exports'), 'creatives.csv');
   await writeTextFile(filePath, buildCsv(CSV_COLUMNS, rows));
   log.info(`Wrote CSV export: ${filePath}`);
   return filePath;

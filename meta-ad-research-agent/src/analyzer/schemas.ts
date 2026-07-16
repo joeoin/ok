@@ -59,19 +59,19 @@ const reportSection = z
 
 export const companyReportSchema = z.object({
   executiveSummary: reportSection,
+  biggestStrategicInsight: reportSection,
+  companyPositioning: reportSection,
   messagingStrategy: reportSection,
-  brandPositioning: reportSection,
-  primaryOffers: reportSection,
-  recurringHooks: reportSection,
-  creativeTrends: reportSection,
-  audienceStrategy: reportSection,
+  customerPsychology: reportSection,
+  creativeWinners: reportSection,
+  creativeBreakdown: reportSection,
+  hookDistribution: reportSection,
+  offerDistribution: reportSection,
   funnelStrategy: reportSection,
-  copywritingPatterns: reportSection,
-  ctaAnalysis: reportSection,
-  strengths: reportSection,
-  weaknesses: reportSection,
-  potentialOpportunities: reportSection,
-  recommendations: reportSection,
+  competitiveWeaknesses: reportSection,
+  opportunities: reportSection,
+  counterStrategy: reportSection,
+  actionItems: reportSection,
 }) satisfies z.ZodType<CompanyReport, z.ZodTypeDef, unknown>;
 
 /**

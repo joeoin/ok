@@ -82,13 +82,22 @@ Each run writes into per-advertiser, per-run folders:
 exports/<advertiser>/<timestamp>/ads.csv        # one row per ad (scraped + analysis fields)
 exports/<advertiser>/<timestamp>/research.json  # complete structured data
 reports/<advertiser>/<timestamp>/report.md      # professional Markdown research report
+exports/<advertiser>/<timestamp>/creatives.csv # one row per DEDUPLICATED creative
 screenshots/<advertiser>/<timestamp>/<adId>.png # per-ad screenshots
 downloads/<advertiser>/<timestamp>/<adId>-N.jpg # downloaded creative images / thumbnails
 ```
 
 Unavailable fields are exported as `Not Available` — never fabricated.
 
-The Markdown report contains: Executive Summary, Messaging Strategy, Brand Positioning, Primary Offers, Recurring Hooks, Creative Trends, Audience Strategy, Funnel Strategy, Copywriting Patterns, CTA Analysis, Strengths, Weaknesses, Potential Opportunities, Recommendations, plus a per-ad breakdown with the 17-dimension structured analysis (hook, offer, CTA, pain point, desired outcome, audience, funnel stage, emotional triggers, framework, angle, creative style, trust signals, social proof, urgency, scarcity, objection handling, differentiators).
+The Markdown report is a 14-section **executive briefing** (in reading order): Executive Summary, Biggest Strategic Insight, Company Positioning, Messaging Strategy, Customer Psychology, Creative Winners, Creative Breakdown, Hook Distribution, Offer Distribution, Funnel Strategy, Competitive Weaknesses, Opportunities, Counter Strategy, Action Items — plus a **Reliability panel**, an **"N ads → M unique creatives"** dedup summary, and a per-creative appendix. See `validation/samples/` for a real example.
+
+## V1.0 trust features
+
+This backend is built so **a customer never receives a report about the wrong company**:
+
+- **Smart Advertiser Resolution** (`src/resolver/`) — a confidence score (0–100) with hard gates: **> 95% auto-accept, 70–95% ranked choices, < 70% refuse** (never silently continues). Signals: exact/fuzzy/substring name match, website/domain, category/industry, verified-page, parent/subsidiary ("AG1 by Athletic Greens"), franchise detection, and a **persistent resolution cache** (`config/advertiser-cache.json`).
+- **Creative Deduplication** (`src/analyzer/creative-grouper.ts`) — collapses many ad IDs into distinct Creative Groups ("678 ads → 12 creatives"), ranked by duplication → longevity → coverage, so strategy isn't inflated by copies.
+- **Reliability Layer** (`src/analyzer/reliability.ts`) — every report carries overall + advertiser/completeness/coverage/creative-coverage scores and **plain-English explanations of every gap**. Nothing is fabricated; unknowns are labeled.
 
 ## Folder structure
 
@@ -97,16 +106,18 @@ src/
 ├── browser/     BrowserManager — Playwright lifecycle, context settings
 ├── scraper/     AdLibraryScraper + NetworkCapture — drive the UI, sniff JSON payloads
 ├── parser/      Tolerant payload → AdRecord/AdvertiserPage normalization (both API shapes)
-├── analyzer/    LlmClient (OpenAI-compatible + Anthropic), AdAnalyzer, zod schemas
-├── prompts/     System/user prompt builders for per-ad analysis and company report
+├── resolver/    Advertiser resolution + confidence gating + historical cache
+├── analyzer/    LlmClient, AdAnalyzer, creative-grouper, aggregate, reliability, schemas
+├── prompts/     System/user prompt builders for per-ad analysis and the briefing
 ├── reporting/   CSV exporter, Markdown report renderer, company report generator
 ├── storage/     AssetStore (screenshots/downloads layout), JSON persistence
-├── utils/       logger, retry/backoff, CSV writer, fs helpers, concurrency, CLI select
+├── utils/       logger, retry/backoff, csv, fs, text, similarity, concurrency, select
 ├── config.ts    .env loading + validation (zod)
 ├── types.ts     Core domain types
 ├── pipeline.ts  End-to-end orchestration
 └── index.ts     CLI entry point
-tests/           Unit tests + Playwright-mocked integration/e2e tests
+tests/           78 tests — unit + Playwright-mocked integration/e2e
+validation/      Product-validation report, architecture review, production readiness, samples
 ```
 
 ## Development

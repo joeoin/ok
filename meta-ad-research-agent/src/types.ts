@@ -16,6 +16,8 @@ export interface AdvertiserPage {
   imageUri: string | null;
   /** ISO country of the page, when exposed. */
   country: string | null;
+  /** Advertiser website/domain when exposed (e.g. "solace.health"). Optional. */
+  website?: string | null;
 }
 
 export type CreativeType = 'image' | 'video' | 'carousel' | 'text' | 'unknown';
@@ -96,22 +98,80 @@ export interface AnalyzedAd {
   analysisError: string | null;
 }
 
-/** Company-wide synthesis produced from all analyzed ads. */
+/**
+ * A group of near-identical ads collapsed into one distinct creative.
+ * Meta commonly runs one creative across dozens of ad IDs (placement/audience
+ * splits); counting ad IDs inflates apparent strategy ~50x. The Creative Group
+ * is the real unit of analysis.
+ */
+export interface CreativeGroup {
+  /** Deterministic id derived from the creative signature. */
+  creativeId: string;
+  /** Number of ad IDs collapsed into this creative. */
+  duplicateCount: number;
+  /** All ad archive IDs in this group. */
+  adArchiveIds: string[];
+  /** Representative ad used for display/analysis. */
+  representative: AdRecord;
+  headline: string | null;
+  creativeType: CreativeType;
+  firstSeen: string | null;
+  lastSeen: string | null;
+  /** Whole-number days between first and last seen, when both known. */
+  estimatedRuntimeDays: number | null;
+  countries: string[];
+  languages: string[];
+  platforms: string[];
+  /** AI analysis of the representative creative (shared by the whole group). */
+  analysis: AdAnalysis | null;
+  analysisError: string | null;
+}
+
+/** 0–100 sub-scores describing how much to trust a report. */
+export interface ReliabilityScores {
+  /** Overall confidence (weighted blend of the sub-scores). */
+  overall: number;
+  /** Confidence the correct advertiser was identified. */
+  advertiserConfidence: number;
+  /** How complete the per-ad fields are (body copy, CTA, media, dates…). */
+  dataCompleteness: number;
+  /** How much of the advertiser's active-ad population was collected. */
+  coverage: number;
+  /** Share of creatives with a usable creative asset (image/video/screenshot). */
+  creativeCoverage: number;
+  /** Human-readable explanations for anything that lowered the scores. */
+  missingDataExplanations: string[];
+  /** Where the data came from (API, scraper, or hybrid). */
+  dataSource: string;
+}
+
+/**
+ * Company-wide synthesis, structured as an executive briefing (14 sections,
+ * in reading order). Every section must be grounded in observed creatives —
+ * no generic marketing advice.
+ */
 export interface CompanyReport {
   executiveSummary: string;
+  biggestStrategicInsight: string;
+  companyPositioning: string;
   messagingStrategy: string;
-  brandPositioning: string;
-  primaryOffers: string;
-  recurringHooks: string;
-  creativeTrends: string;
-  audienceStrategy: string;
+  customerPsychology: string;
+  creativeWinners: string;
+  creativeBreakdown: string;
+  hookDistribution: string;
+  offerDistribution: string;
   funnelStrategy: string;
-  copywritingPatterns: string;
-  ctaAnalysis: string;
-  strengths: string;
-  weaknesses: string;
-  potentialOpportunities: string;
-  recommendations: string;
+  competitiveWeaknesses: string;
+  opportunities: string;
+  counterStrategy: string;
+  actionItems: string;
+}
+
+/** How the advertiser was resolved, for the report's reliability panel. */
+export interface AdvertiserResolutionInfo {
+  confidencePct: number;
+  method: 'auto-accepted' | 'user-selected' | 'page-id';
+  reasons: string[];
 }
 
 /** Everything a single research run produces. */
@@ -121,6 +181,12 @@ export interface ResearchResult {
   searchCountry: string;
   collectedAt: string;
   ads: AnalyzedAd[];
+  /** Distinct creatives (deduped), ranked most-significant first. */
+  creativeGroups: CreativeGroup[];
   report: CompanyReport | null;
   reportError: string | null;
+  reliability: ReliabilityScores;
+  advertiserResolution: AdvertiserResolutionInfo;
+  /** Estimated active-ad population from discovery, when known. */
+  estimatedActiveAds: number | null;
 }

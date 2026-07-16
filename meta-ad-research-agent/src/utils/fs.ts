@@ -1,14 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeText } from './text.js';
 
 /** Filesystem-safe slug for advertiser names: "Acme Solar!" -> "acme-solar". */
 export function slugify(input: string): string {
-  const slug = input
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  const slug = normalizeText(input).replace(/ +/g, '-');
   return slug || 'advertiser';
 }
 

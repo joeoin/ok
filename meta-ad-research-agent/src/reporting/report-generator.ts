@@ -1,5 +1,6 @@
-import type { AdvertiserPage, AnalyzedAd, CompanyReport } from '../types.js';
+import type { AdvertiserPage, CompanyReport, CreativeGroup } from '../types.js';
 import type { LlmClient } from '../analyzer/llm-client.js';
+import type { Aggregates } from '../analyzer/aggregate.js';
 import { companyReportSchema, extractJsonObject } from '../analyzer/schemas.js';
 import {
   COMPANY_REPORT_SYSTEM_PROMPT,
@@ -15,22 +16,24 @@ export interface ReportOutcome {
   error: string | null;
 }
 
-/** Synthesize the company-wide strategy report from all analyzed ads. */
+/** Synthesize the executive briefing from deduplicated creatives + aggregates. */
 export async function generateCompanyReport(
   llm: LlmClient | null,
   advertiser: AdvertiserPage,
-  ads: AnalyzedAd[],
+  groups: CreativeGroup[],
+  aggregates: Aggregates,
+  estimatedPopulation: number | null,
 ): Promise<ReportOutcome> {
   if (!llm) return { report: null, error: 'Report generation disabled (LLM_PROVIDER=none)' };
-  if (ads.length === 0) return { report: null, error: 'No ads collected — nothing to report on' };
+  if (groups.length === 0) return { report: null, error: 'No creatives collected — nothing to report on' };
 
   try {
-    log.info('Generating company-wide report…');
+    log.info('Generating executive briefing…');
     const report = await withRetry(
       async () => {
         const raw = await llm.complete({
           system: COMPANY_REPORT_SYSTEM_PROMPT,
-          user: buildCompanyReportUserPrompt(advertiser, ads),
+          user: buildCompanyReportUserPrompt(advertiser, groups, aggregates, estimatedPopulation),
           json: true,
           maxTokens: 4000,
         });

@@ -61,16 +61,25 @@ describe('runResearch (mocked Ad Library, LLM disabled)', () => {
     expect(result.advertiser.pageId).toBe('111222333444');
     expect(result.ads).toHaveLength(1);
     expect(result.report).toBeNull();
+    // Dedup + reliability wired through.
+    expect(result.creativeGroups).toHaveLength(1);
+    expect(result.creativeGroups[0]!.duplicateCount).toBe(1);
+    expect(result.reliability.advertiserConfidence).toBeGreaterThan(90);
+    expect(result.advertiserResolution.method).toBe('auto-accepted');
 
     const csv = await fs.readFile(files.csv, 'utf8');
-    expect(csv.split('\r\n')[0]).toContain('adArchiveId');
-    expect(csv).toContain('1234567890');
+    expect(csv.split('\r\n')[0]).toContain('creativeId');
+    expect(csv.split('\r\n')[0]).toContain('duplicateCount');
+    expect(csv).toContain('1234567890'); // exampleAdId
 
     const json = JSON.parse(await fs.readFile(files.json, 'utf8'));
     expect(json.ads[0].ad.adArchiveId).toBe('1234567890');
+    expect(json.creativeGroups[0].creativeId).toMatch(/^cg_/);
+    expect(json.reliability.overall).toBeGreaterThan(0);
 
     const md = await fs.readFile(files.markdown, 'utf8');
-    expect(md).toContain('# Meta Ad Library Research: Acme Solar');
+    expect(md).toContain('# Competitive Intelligence Briefing: Acme Solar');
+    expect(md).toContain('## Reliability');
 
     // Screenshot saved and referenced.
     expect(result.ads[0]!.ad.screenshotPath).toMatch(/screenshots[\\/]acme-solar[\\/].*1234567890\.png$/);
