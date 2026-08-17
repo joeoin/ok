@@ -1,0 +1,780 @@
+<title>Road to 76</title>
+<style>
+  :root {
+    --ground: #E9EDF0;
+    --surface: #FFFFFF;
+    --surface-2: #F2F5F7;
+    --ink: #10202C;
+    --muted: #56697A;
+    --faint: #8195A4;
+    --accent: #8F6210;
+    --accent-soft: #F0E4CC;
+    --gap: #9B3427;
+    --gap-soft: #F6E1DD;
+    --have: #256155;
+    --have-soft: #DCEBE6;
+    --line: #C6D1D9;
+    --line-soft: #DDE4E9;
+    --shadow: 0 1px 2px rgba(16,32,44,.06), 0 8px 24px rgba(16,32,44,.05);
+
+    --serif: "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0B1620;
+      --surface: #13232F;
+      --surface-2: #182B39;
+      --ink: #DEE7ED;
+      --muted: #93A6B4;
+      --faint: #708598;
+      --accent: #D9A441;
+      --accent-soft: #33281433;
+      --gap: #E1826F;
+      --gap-soft: #3A1F1B66;
+      --have: #63B7A0;
+      --have-soft: #16352E66;
+      --line: #27394A;
+      --line-soft: #1E2F3E;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0B1620;
+    --surface: #13232F;
+    --surface-2: #182B39;
+    --ink: #DEE7ED;
+    --muted: #93A6B4;
+    --faint: #708598;
+    --accent: #D9A441;
+    --accent-soft: #33281433;
+    --gap: #E1826F;
+    --gap-soft: #3A1F1B66;
+    --have: #63B7A0;
+    --have-soft: #16352E66;
+    --line: #27394A;
+    --line-soft: #1E2F3E;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead { display: flex; flex-direction: column; gap: 20px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(34px, 6vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -.02em;
+    margin: 0;
+    text-wrap: balance;
+    font-weight: 600;
+  }
+
+  .standfirst {
+    font-size: 17px;
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0;
+  }
+
+  .vitals {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .vital {
+    background: var(--surface);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .vital dt {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0;
+  }
+
+  .vital dd {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 26px;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vital dd small {
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--muted);
+    display: block;
+    line-height: 1.4;
+    margin-top: 3px;
+  }
+
+  .v-gap dd { color: var(--gap); }
+  .v-have dd { color: var(--have); }
+
+  /* ---------- sections ---------- */
+
+  section { display: flex; flex-direction: column; gap: 20px; }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 27px;
+    letter-spacing: -.01em;
+    margin: 0;
+    font-weight: 600;
+    text-wrap: balance;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent);
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: .01em;
+    margin: 0;
+  }
+
+  p { margin: 0; max-width: 68ch; }
+  .lede { color: var(--muted); }
+
+  strong { font-weight: 650; }
+  em.term { font-style: normal; font-family: var(--mono); font-size: .9em; background: var(--surface-2); padding: 1px 5px; border-radius: 2px; }
+
+  /* ---------- findings ---------- */
+
+  .findings { display: flex; flex-direction: column; gap: 14px; }
+
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-left: 3px solid var(--gap);
+    border-radius: 3px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: var(--shadow);
+  }
+
+  .finding.ok { border-left-color: var(--have); }
+
+  .finding-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: 3px 7px;
+    border-radius: 2px;
+    background: var(--gap-soft);
+    color: var(--gap);
+    white-space: nowrap;
+  }
+
+  .finding.ok .tag { background: var(--have-soft); color: var(--have); }
+
+  .finding p { font-size: 15px; color: var(--muted); }
+  .finding p.claim { color: var(--ink); font-size: 15.5px; }
+
+  /* ---------- day plan ---------- */
+
+  .days { display: flex; flex-direction: column; gap: 0; }
+
+  .day {
+    display: grid;
+    grid-template-columns: 74px 1fr;
+    gap: 22px;
+    padding: 22px 0;
+    border-top: 1px solid var(--line-soft);
+    align-items: start;
+  }
+
+  .day:first-child { border-top: none; padding-top: 6px; }
+
+  .day-mark { display: flex; flex-direction: column; gap: 2px; }
+
+  .day-n {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--accent);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .day-date {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  .day-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+  .day-title {
+    font-family: var(--serif);
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.25;
+    margin: 0;
+  }
+
+  .day-hours {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--faint);
+    letter-spacing: .04em;
+  }
+
+  ul.topics {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  ul.topics li {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    color: var(--muted);
+    padding: 4px 8px;
+    border-radius: 2px;
+    line-height: 1.35;
+  }
+
+  ul.topics li.new {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .day-note {
+    font-size: 14px;
+    color: var(--muted);
+    border-left: 2px solid var(--line);
+    padding-left: 12px;
+  }
+
+  .day.test { background: var(--surface); border-radius: 3px; padding: 22px 20px; border: 1px solid var(--accent); margin-top: 8px; }
+  .day.test .day-title { color: var(--accent); }
+
+  /* ---------- reference cards ---------- */
+
+  .refcard {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 3px;
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: var(--shadow);
+  }
+
+  .ref-split {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 24px;
+  }
+
+  .fx {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    background: var(--surface-2);
+    border-radius: 2px;
+    padding: 8px 11px;
+    color: var(--ink);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .fx-list { display: flex; flex-direction: column; gap: 6px; }
+
+  .table-scroll { overflow-x: auto; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    min-width: 380px;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--line-soft);
+    white-space: nowrap;
+  }
+
+  th {
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 600;
+    border-bottom: 1px solid var(--line);
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  .circle-wrap { display: flex; justify-content: center; padding: 4px 0; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ---------- rules list ---------- */
+
+  ol.rules { margin: 0; padding: 0; list-style: none; counter-reset: r; display: flex; flex-direction: column; gap: 12px; }
+
+  ol.rules li {
+    counter-increment: r;
+    display: grid;
+    grid-template-columns: 26px 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+
+  ol.rules li::before {
+    content: counter(r);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+    padding-top: 3px;
+  }
+
+  ol.rules p { font-size: 15px; }
+  ol.rules p span { color: var(--muted); }
+
+  /* ---------- callout ---------- */
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--accent);
+    border-radius: 3px;
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .callout h3 { font-size: 16px; font-family: var(--serif); font-weight: 600; }
+  .callout p { font-size: 15px; color: var(--muted); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    font-size: 13px;
+    color: var(--faint);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  footer a { color: var(--muted); }
+
+  @media (max-width: 560px) {
+    .day { grid-template-columns: 1fr; gap: 10px; }
+    .day-mark { flex-direction: row; align-items: baseline; gap: 10px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">ALEKS PPL &middot; Arizona State University &middot; Prepared 17 Aug 2026</div>
+    <h1>Road to 76</h1>
+    <p class="standfirst">A seven-day sprint to the score that unlocks MAT&nbsp;265. Built from your 08/15 Learning Pie — and from two things in it that contradict the plan you described.</p>
+
+    <dl class="vitals">
+      <div class="vital"><dt>Target</dt><dd>76<small>MAT 265 cutoff</small></dd></div>
+      <div class="vital v-have"><dt>Banked</dt><dd>105<small>84 mastered + 21 learned</small></dd></div>
+      <div class="vital v-gap"><dt>Remaining</dt><dd>141<small>of 246 in your module</small></dd></div>
+      <div class="vital v-gap"><dt>Trig topics</dt><dd>0<small>none exist in your module</small></dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <h2>Three corrections before you study anything</h2>
+
+    <div class="findings">
+
+      <article class="finding">
+        <div class="finding-head">
+          <span class="tag">Wrong target</span>
+          <h3>There is no calculus on the ALEKS placement test.</h3>
+        </div>
+        <p class="claim">ALEKS PPL measures <em>readiness for</em> Calculus I. Its ceiling is precalculus and trigonometry. Every hour you spend reviewing derivatives from Brief Calc earns exactly zero points.</p>
+        <p>The eight content areas are: real numbers; equations and inequalities; linear and quadratic functions; exponents and polynomials; rational expressions; radical expressions; exponentials and logarithms; and geometry and trigonometry. That is the whole test. Thirty questions, adaptive, 60–90 minutes.</p>
+      </article>
+
+      <article class="finding">
+        <div class="finding-head">
+          <span class="tag">Wrong module</span>
+          <h3>Your prep module cannot teach you trigonometry.</h3>
+        </div>
+        <p class="claim">You are enrolled in <strong>Prep for PreCalculus</strong>. I searched all 246 topics across all seven pages of your report: zero mentions of sine, cosine, tangent, radians, the unit circle, or identities. Zero mentions of logarithms or exponential functions either.</p>
+        <p>The naming is the trap. "Prep for PreCalculus" prepares you to <em>enter</em> precalculus — its content ceiling is college algebra. The module that contains trig and logs is <strong>Prep for Calculus</strong>. Your eight pie slices are Real Numbers, Equations and Inequalities, Exponents and Polynomials, Lines and Systems, Functions and Graphs, Rational Expressions, Radical Expressions, and Geometry. Grinding that pie to 100% still leaves you unable to answer a single trig question.</p>
+      </article>
+
+      <article class="finding">
+        <div class="finding-head">
+          <span class="tag">Check this</span>
+          <h3>The algebra isn't as solid as you think it is.</h3>
+        </div>
+        <p class="claim">You said you already know college algebra. Your Progress Knowledge Check from two days ago disagrees on specifics that appear constantly on this test.</p>
+        <p>Sitting in Ready-to-Learn at 0/5: <em class="term">applying the quadratic formula</em>, <em class="term">completing the square</em>, <em class="term">discriminant</em>, <em class="term">factoring by grouping</em>, <em class="term">polynomial long division</em>, <em class="term">rationalizing the denominator</em>, <em class="term">rational exponents</em>, <em class="term">composition of two functions</em>, <em class="term">domain and range from a graph</em>, <em class="term">set-builder and interval notation</em>, and every rational-expression topic in the module. Some of this is probably rust rather than ignorance — but ALEKS scores what you demonstrate, not what you once knew.</p>
+      </article>
+
+      <article class="finding ok">
+        <div class="finding-head">
+          <span class="tag">In your favor</span>
+          <h3>Your score data is stale, and that's good news.</h3>
+        </div>
+        <p class="claim">The sub-45 was from high school, before Brief Calc. Your arithmetic, linear equations, systems, factoring and exponent fundamentals are all sitting in Mastered — 84 topics deep. Your true current level is very likely well above 45.</p>
+        <p>That means the gap to 76 is narrower than the old number suggests, and it is concentrated in three places: trigonometry, logarithms, and mechanical fluency on quadratics/rationals/radicals. That is a genuinely coverable amount of ground in a week.</p>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Do this today, before you open a textbook</h2>
+    <ol class="rules">
+      <li><p><strong>Ask ASU whether you can switch to Prep for Calculus.</strong> <span>Policies differ by school and several state you only ever get one module — so ask before you touch anything, or you may forfeit the 105 topics you've banked. Contact ASU's placement office or your advisor today.</span></p></li>
+      <li><p><strong>Check how many placement attempts you have left.</strong> <span>The usual setup is five attempts total, a 48-hour wait between them, and required hours in the prep module in between — commonly 3 hours before attempt two and 5 hours before each one after. Confirm ASU's exact numbers, because they dictate whether you get one shot this week or two.</span></p></li>
+      <li><p><strong>Confirm the deadline and whether MAT 265 seats still exist.</strong> <span>Fall 2026 classes begin Thursday, 20 Aug. Placement is only half the problem if the sections are already full.</span></p></li>
+      <li><p><strong>Plan for two attempts, not one.</strong> <span>Take one mid-week to replace that stale sub-45 with a real number and a real pie, then the final one at the end of the week. If the mid-week attempt already clears 76, you're done.</span></p></li>
+    </ol>
+    <p class="lede">The trig and logarithm work below does not depend on any of this. Free sources cover it regardless of which module you end up in: Khan Academy's Trigonometry and Algebra&nbsp;2 units, OpenStax <em>Precalculus</em> (chapters 4–8), and Paul's Online Math Notes.</p>
+  </section>
+
+  <section>
+    <h2>The seven days</h2>
+    <p class="lede">Roughly 4–5 focused hours a day. Days 1–3 convert rust into points fast — that's the cheapest scoring on the test. Days 4–6 are net-new material you have never seen. Every chip below is a real topic name from your report; the highlighted ones don't exist in your module and must come from outside it.</p>
+
+    <div class="days">
+
+      <div class="day">
+        <div class="day-mark"><span class="day-n">01</span><span class="day-date">Mon 17 Aug</span></div>
+        <div class="day-body">
+          <h3 class="day-title">Quadratics and exponent rules</h3>
+          <span class="day-hours">4 hrs · all from your existing pie</span>
+          <ul class="topics">
+            <li>Quadratic formula: exact answers</li><li>Completing the square</li><li>Discriminant</li><li>Roots with leading coeff &gt; 1</li><li>Factoring by grouping</li><li>Square root property</li><li>Power rules, negative exponents</li><li>Quotient rule, negative exponents</li><li>Quadratic inequality, factored form</li>
+          </ul>
+          <p class="day-note">Quadratics are the single highest-frequency object on this test. You need the formula from memory, in exact radical form, without a calculator.</p>
+        </div>
+      </div>
+
+      <div class="day">
+        <div class="day-mark"><span class="day-n">02</span><span class="day-date">Tue 18 Aug</span></div>
+        <div class="day-body">
+          <h3 class="day-title">Rational expressions and radicals</h3>
+          <span class="day-hours">4 hrs · all from your existing pie</span>
+          <ul class="topics">
+            <li>Adding rationals, unlike denominators</li><li>Multiplying rationals with quadratics</li><li>Complex fractions</li><li>Domain: excluded values</li><li>Polynomial long division</li><li>Rationalizing the denominator</li><li>Rational exponents</li><li>Radical ↔ exponent form</li><li>Higher roots of whole numbers</li><li>Radical equations</li>
+          </ul>
+          <p class="day-note">Your entire Rational Expressions slice is untouched — nothing mastered, nothing learned. It's an easy slice to clear and it feeds directly into the log work on Day 4.</p>
+        </div>
+      </div>
+
+      <div class="day">
+        <div class="day-mark"><span class="day-n">03</span><span class="day-date">Wed 19 Aug</span></div>
+        <div class="day-body">
+          <h3 class="day-title">Functions, graphs, inequalities</h3>
+          <span class="day-hours">4 hrs · all from your existing pie · <strong>take attempt #1 tonight</strong></span>
+          <ul class="topics">
+            <li>Composition of functions</li><li>Domain and range from a graph</li><li>Set-builder and interval notation</li><li>Transformations: two steps</li><li>Reflecting over an axis</li><li>Vertex and x-intercepts of a parabola</li><li>Circle in standard form</li><li>Distance between two points</li><li>|ax+b| = c</li><li>Absolute value inequalities</li><li>Compound inequalities</li><li>Piecewise functions</li>
+          </ul>
+          <p class="day-note">End the day with a placement attempt. Three days of algebra repair is enough to move the number meaningfully, and you need a current score to know how much trig you actually have to absorb.</p>
+        </div>
+      </div>
+
+      <div class="day">
+        <div class="day-mark"><span class="day-n">04</span><span class="day-date">Thu 20 Aug</span></div>
+        <div class="day-body">
+          <h3 class="day-title">Exponentials and logarithms</h3>
+          <span class="day-hours">4 hrs · net-new · reference sheet below</span>
+          <ul class="topics">
+            <li class="new">Log ↔ exponential form</li><li class="new">Product, quotient, power laws</li><li class="new">Change of base</li><li class="new">Solving exponential equations</li><li class="new">Solving log equations</li><li class="new">Domain of a log function</li><li class="new">Graphs of eˣ and ln x</li><li class="new">Compound interest and growth/decay</li>
+          </ul>
+          <p class="day-note">A small, closed rule set — genuinely learnable in one day, and it's a full content area of the test. Best points-per-hour on this entire plan. Do it before trig.</p>
+        </div>
+      </div>
+
+      <div class="day">
+        <div class="day-mark"><span class="day-n">05</span><span class="day-date">Fri 21 Aug</span></div>
+        <div class="day-body">
+          <h3 class="day-title">Trigonometry I — angles and the unit circle</h3>
+          <span class="day-hours">5 hrs · net-new · reference sheet below</span>
+          <ul class="topics">
+            <li class="new">SOH-CAH-TOA</li><li class="new">30-60-90 and 45-45-90</li><li class="new">Degrees ↔ radians</li><li class="new">Unit circle, all four quadrants</li><li class="new">Reference angles</li><li class="new">Exact values at standard angles</li><li class="new">Reciprocal functions</li><li class="new">Right-triangle word problems</li>
+          </ul>
+          <p class="day-note">Memorize the first quadrant and the sign rules. Everything else on the circle is derived from those, and derivation is faster than memorizing 16 ordered pairs.</p>
+        </div>
+      </div>
+
+      <div class="day">
+        <div class="day-mark"><span class="day-n">06</span><span class="day-date">Sat 22 Aug</span></div>
+        <div class="day-body">
+          <h3 class="day-title">Trigonometry II — graphs, identities, triangles</h3>
+          <span class="day-hours">5 hrs · net-new · reference sheet below</span>
+          <ul class="topics">
+            <li class="new">Amplitude, period, phase shift</li><li class="new">Graphing sine and cosine</li><li class="new">Pythagorean identities</li><li class="new">Sum and difference formulas</li><li class="new">Double-angle formulas</li><li class="new">Inverse trig functions</li><li class="new">Solving basic trig equations</li><li class="new">Law of sines and cosines</li>
+          </ul>
+          <p class="day-note">If you run out of time, cut sum-and-difference and double-angle first. Graphs, Pythagorean identities and the two laws are worth more on a placement test.</p>
+        </div>
+      </div>
+
+      <div class="day test">
+        <div class="day-mark"><span class="day-n">07</span><span class="day-date">Sun 23 Aug</span></div>
+        <div class="day-body">
+          <h3 class="day-title">Mixed review, then take it</h3>
+          <span class="day-hours">3 hrs review · then the attempt</span>
+          <p class="day-note">No new material. Do mixed problems across all eight areas so you practice recognizing which tool a problem wants — that's the skill an adaptive test actually measures. Then sit the assessment with paper, pencil, and 90 uninterrupted minutes.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Trigonometry from zero</h2>
+    <p class="lede">You said you've never learned any of this. Everything on the placement test is built from what's on this page.</p>
+
+    <div class="refcard">
+      <h3>The three ratios, and the two triangles that generate every exact value</h3>
+      <div class="ref-split">
+        <div class="fx-list">
+          <div class="fx">sin θ = opposite / hypotenuse</div>
+          <div class="fx">cos θ = adjacent / hypotenuse</div>
+          <div class="fx">tan θ = opposite / adjacent = sin θ / cos θ</div>
+          <div class="fx">csc = 1/sin &nbsp; sec = 1/cos &nbsp; cot = 1/tan</div>
+        </div>
+        <div class="fx-list">
+          <div class="fx">45-45-90 → sides 1 : 1 : √2</div>
+          <div class="fx">30-60-90 → sides 1 : √3 : 2</div>
+          <div class="fx">π radians = 180°</div>
+          <div class="fx">deg → rad: × π/180 &nbsp; rad → deg: × 180/π</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="refcard">
+      <h3>The unit circle — memorize this quadrant only</h3>
+
+      <div class="circle-wrap">
+        <svg viewBox="0 0 340 300" role="img" aria-label="Unit circle diagram showing quadrant one angles at 0, 30, 45, 60 and 90 degrees with their coordinates, and the ASTC sign rule for all four quadrants.">
+          <g stroke="var(--line)" stroke-width="1">
+            <line x1="30" y1="150" x2="290" y2="150"/>
+            <line x1="160" y1="20" x2="160" y2="280"/>
+          </g>
+          <circle cx="160" cy="150" r="110" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+
+          <!-- quadrant sign labels -->
+          <g font-family="var(--mono)" font-size="10" fill="var(--faint)" text-anchor="middle">
+            <text x="100" y="98">S</text>
+            <text x="100" y="110" font-size="8">sin +</text>
+            <text x="222" y="98">A</text>
+            <text x="222" y="110" font-size="8">all +</text>
+            <text x="100" y="200">T</text>
+            <text x="100" y="212" font-size="8">tan +</text>
+            <text x="222" y="200">C</text>
+            <text x="222" y="212" font-size="8">cos +</text>
+          </g>
+
+          <!-- Q1 radii -->
+          <g stroke="var(--accent)" stroke-width="1.5" opacity="0.55">
+            <line x1="160" y1="150" x2="255" y2="95"/>
+            <line x1="160" y1="150" x2="238" y2="72"/>
+            <line x1="160" y1="150" x2="215" y2="55"/>
+          </g>
+
+          <!-- Q1 points -->
+          <g fill="var(--accent)">
+            <circle cx="270" cy="150" r="3.5"/>
+            <circle cx="255" cy="95" r="3.5"/>
+            <circle cx="238" cy="72" r="3.5"/>
+            <circle cx="215" cy="55" r="3.5"/>
+            <circle cx="160" cy="40" r="3.5"/>
+          </g>
+
+          <!-- labels -->
+          <g font-family="var(--mono)" font-size="10.5" fill="var(--ink)">
+            <text x="278" y="147">0</text>
+            <text x="278" y="160" fill="var(--muted)" font-size="9">(1, 0)</text>
+
+            <text x="264" y="90">π/6</text>
+            <text x="264" y="102" fill="var(--muted)" font-size="9">(√3/2, 1/2)</text>
+
+            <text x="247" y="60">π/4</text>
+            <text x="247" y="48" fill="var(--muted)" font-size="9">(√2/2, √2/2)</text>
+
+            <text x="196" y="40">π/3</text>
+            <text x="176" y="28" fill="var(--muted)" font-size="9">(1/2, √3/2)</text>
+
+            <text x="120" y="38">π/2</text>
+            <text x="105" y="50" fill="var(--muted)" font-size="9">(0, 1)</text>
+          </g>
+        </svg>
+      </div>
+
+      <p class="lede">Each point is <strong>(cos θ, sin θ)</strong>. For any angle outside quadrant I: find its reference angle to the x-axis, read the value off this quadrant, then apply the sign from the ASTC letters. That's the whole method — no additional memorization.</p>
+
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>θ</th><th>degrees</th><th>sin</th><th>cos</th><th>tan</th></tr></thead>
+          <tbody>
+            <tr><td>0</td><td>0°</td><td>0</td><td>1</td><td>0</td></tr>
+            <tr><td>π/6</td><td>30°</td><td>1/2</td><td>√3/2</td><td>√3/3</td></tr>
+            <tr><td>π/4</td><td>45°</td><td>√2/2</td><td>√2/2</td><td>1</td></tr>
+            <tr><td>π/3</td><td>60°</td><td>√3/2</td><td>1/2</td><td>√3</td></tr>
+            <tr><td>π/2</td><td>90°</td><td>1</td><td>0</td><td>undefined</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="refcard">
+      <h3>Identities, graphs and oblique triangles</h3>
+      <div class="ref-split">
+        <div class="fx-list">
+          <div class="fx">sin²θ + cos²θ = 1</div>
+          <div class="fx">1 + tan²θ = sec²θ</div>
+          <div class="fx">1 + cot²θ = csc²θ</div>
+          <div class="fx">sin 2θ = 2 sin θ cos θ</div>
+          <div class="fx">cos 2θ = cos²θ − sin²θ = 2cos²θ − 1</div>
+          <div class="fx">sin(A ± B) = sinA cosB ± cosA sinB</div>
+          <div class="fx">cos(A ± B) = cosA cosB ∓ sinA sinB</div>
+        </div>
+        <div class="fx-list">
+          <div class="fx">y = A·sin(Bx − C) + D</div>
+          <div class="fx">amplitude = |A|</div>
+          <div class="fx">period = 2π / B</div>
+          <div class="fx">phase shift = C / B</div>
+          <div class="fx">vertical shift = D</div>
+          <div class="fx">a/sin A = b/sin B = c/sin C</div>
+          <div class="fx">c² = a² + b² − 2ab·cos C</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Logarithms from zero</h2>
+    <p class="lede">Also absent from your module, also on the test. One definition and five laws.</p>
+
+    <div class="refcard">
+      <div class="ref-split">
+        <div class="fx-list">
+          <div class="fx">log<sub>b</sub>(x) = y &nbsp;⟺&nbsp; b<sup>y</sup> = x</div>
+          <div class="fx">log<sub>b</sub>(MN) = log<sub>b</sub>M + log<sub>b</sub>N</div>
+          <div class="fx">log<sub>b</sub>(M/N) = log<sub>b</sub>M − log<sub>b</sub>N</div>
+          <div class="fx">log<sub>b</sub>(M<sup>p</sup>) = p·log<sub>b</sub>M</div>
+          <div class="fx">log<sub>b</sub>x = ln x / ln b</div>
+        </div>
+        <div class="fx-list">
+          <div class="fx">log<sub>b</sub>b = 1 &nbsp; log<sub>b</sub>1 = 0</div>
+          <div class="fx">b<sup>log<sub>b</sub>x</sup> = x &nbsp; log<sub>b</sub>(b<sup>x</sup>) = x</div>
+          <div class="fx">a<sup>x</sup> = c → x = log c / log a</div>
+          <div class="fx">A = P(1 + r/n)<sup>nt</sup></div>
+          <div class="fx">A = P·e<sup>rt</sup> &nbsp; (continuous)</div>
+        </div>
+      </div>
+      <p class="lede">Domain trap ALEKS loves: the argument of a logarithm must be strictly positive. For <em class="term">log(x − 3)</em> the domain is x &gt; 3, and any solution that makes an argument zero or negative gets discarded — always check candidate solutions back in the original equation.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Test-day rules</h2>
+    <ol class="rules">
+      <li><p><strong>Paper, pencil, 90 uninterrupted minutes.</strong> <span>You cannot go back to a previous question, and the test adapts to what you've already shown. One sitting, no distractions.</span></p></li>
+      <li><p><strong>Use "I don't know" honestly.</strong> <span>A wrong guess and an "I don't know" cost the same on that question, but a wrong guess can send the test probing down a branch you can't defend and waste questions you could have scored on. If you genuinely have no idea, say so. If you can make real progress, work it.</span></p></li>
+      <li><p><strong>Expect no calculator on most items.</strong> <span>ALEKS supplies one only where it's allowed. Practice quadratics, radicals and exact trig values by hand all week.</span></p></li>
+      <li><p><strong>Answer in exact form.</strong> <span>Radicals stay radicals. √2/2, not 0.707. Decimal approximations get marked wrong.</span></p></li>
+      <li><p><strong>Do it honestly.</strong> <span>Placement is proctored, and beyond that, a score you didn't earn just drops you into a class that will bury you in week three.</span></p></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>The honest read, and the fallback</h2>
+
+    <div class="callout">
+      <h3>What this plan can and can't do</h3>
+      <p>Repairing the algebra is very achievable in a week — that material is rust, and rust comes off fast. Learning trigonometry from absolute zero in two days is not learning trigonometry; it is pattern-matching hard enough to survive roughly six adaptive questions. That can be enough to clear 76 if the algebra carries the rest. It is a real shot, and it's worth taking, especially with two attempts.</p>
+      <p>What it won't do is make you ready for the class. MAT 265 uses trig constantly — derivatives of sine and cosine, trig limits, related-rates problems built on triangles, trig substitution later on. A student who crammed the unit circle for a placement test in August is generally in serious trouble by October.</p>
+    </div>
+
+    <div class="callout">
+      <h3>The fallback is not a failure</h3>
+      <p>If the score doesn't come: take MAT 170 (Precalculus) this fall and MAT 265 in spring. You'd learn trig properly, with a semester to absorb it, and walk into Calculus I actually prepared. It costs one semester on the math sequence, and for a CS degree that's usually absorbable — your first-semester programming courses don't depend on Calculus I.</p>
+      <p>Take the shot this week. Just decide now that the fallback is acceptable, so that a number below 76 on Sunday is a scheduling adjustment rather than a crisis.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>Built from Learning Pie Report dated 08/16/2026 · Prep for PreCalculus · 84 mastered, 21 learned, 141 remaining.</p>
+    <p>Verify all placement policies — attempt limits, waiting periods, required prep hours, module switching, and deadlines — directly with ASU, since they are set by the institution and were not publicly listed at the time of writing.</p>
+  </footer>
+
+</div>
