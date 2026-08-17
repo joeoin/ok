@@ -1,0 +1,331 @@
+<title>Day 1: Quadratics &amp; Exponents</title>
+<style>
+  :root {
+    --ground: #E9EDF0;
+    --surface: #FFFFFF;
+    --surface-2: #F2F5F7;
+    --ink: #10202C;
+    --muted: #56697A;
+    --faint: #8195A4;
+    --accent: #8F6210;
+    --accent-soft: #F0E4CC;
+    --gap: #9B3427;
+    --gap-soft: #F6E1DD;
+    --have: #256155;
+    --have-soft: #DCEBE6;
+    --line: #C6D1D9;
+    --line-soft: #DDE4E9;
+    --shadow: 0 1px 2px rgba(16,32,44,.06), 0 8px 24px rgba(16,32,44,.05);
+    --serif: "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0B1620; --surface: #13232F; --surface-2: #182B39; --ink: #DEE7ED;
+      --muted: #93A6B4; --faint: #708598; --accent: #D9A441; --accent-soft: #33281433;
+      --gap: #E1826F; --gap-soft: #3A1F1B66; --have: #63B7A0; --have-soft: #16352E66;
+      --line: #27394A; --line-soft: #1E2F3E; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0B1620; --surface: #13232F; --surface-2: #182B39; --ink: #DEE7ED;
+    --muted: #93A6B4; --faint: #708598; --accent: #D9A441; --accent-soft: #33281433;
+    --gap: #E1826F; --gap-soft: #3A1F1B66; --have: #63B7A0; --have-soft: #16352E66;
+    --line: #27394A; --line-soft: #1E2F3E; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; display: flex; flex-direction: column; gap: 52px; }
+
+  .masthead { display: flex; flex-direction: column; gap: 16px; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+  h1 { font-family: var(--serif); font-size: clamp(30px, 5.5vw, 44px); line-height: 1.08; letter-spacing: -.02em; margin: 0; text-wrap: balance; font-weight: 600; }
+  .standfirst { font-size: 16.5px; color: var(--muted); max-width: 62ch; margin: 0; }
+
+  .progress { display: flex; gap: 6px; }
+  .progress span { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
+  .progress span.done { background: var(--accent); }
+
+  section { display: flex; flex-direction: column; gap: 18px; }
+  h2 { font-family: var(--serif); font-size: 25px; letter-spacing: -.01em; margin: 0; font-weight: 600; padding-bottom: 10px; border-bottom: 2px solid var(--accent); display: flex; align-items: baseline; gap: 10px; }
+  h2 .no { font-family: var(--mono); font-size: 15px; color: var(--accent); font-weight: 600; }
+  h3 { font-family: var(--sans); font-size: 14.5px; font-weight: 650; margin: 0; }
+  p { margin: 0; max-width: 66ch; }
+  .lede { color: var(--muted); font-size: 15px; }
+
+  .card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 3px; padding: 22px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 16px; }
+
+  .fx { font-family: var(--mono); font-size: 14px; background: var(--surface-2); border-radius: 2px; padding: 8px 11px; color: var(--ink); overflow-x: auto; white-space: nowrap; }
+  .fx-list { display: flex; flex-direction: column; gap: 6px; }
+  .ref-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 22px; }
+
+  svg { max-width: 100%; height: auto; }
+  .diagram-wrap { display: flex; justify-content: center; padding: 6px 0; }
+  figcaption { text-align: center; font-size: 12.5px; color: var(--faint); font-family: var(--mono); margin-top: -6px; }
+
+  /* worked example */
+  .worked { display: flex; flex-direction: column; gap: 10px; }
+  .worked .prob { font-family: var(--serif); font-size: 18px; }
+  .steps { display: flex; flex-direction: column; gap: 0; }
+  .step { display: grid; grid-template-columns: 20px 1fr; gap: 10px; padding: 9px 0; border-top: 1px dashed var(--line-soft); }
+  .step:first-child { border-top: none; }
+  .step .n { font-family: var(--mono); font-size: 11px; color: var(--accent); padding-top: 2px; }
+  .step .body { display: flex; flex-direction: column; gap: 3px; }
+  .step .math { font-family: var(--mono); font-size: 14.5px; }
+  .step .why { font-size: 13px; color: var(--muted); }
+
+  /* practice with reveal */
+  .practice-set { display: flex; flex-direction: column; gap: 12px; }
+  .pq { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 3px; padding: 16px 18px; }
+  .pq .q { font-family: var(--serif); font-size: 16.5px; margin-bottom: 4px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); padding: 4px 0; }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .answer { font-family: var(--mono); font-size: 14.5px; background: var(--accent-soft); color: var(--accent); border-radius: 2px; padding: 10px 12px; margin-top: 8px; }
+
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; min-width: 400px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+  th { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; border-bottom: 1px solid var(--line); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .callout { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 3px; padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+  .callout h3 { font-family: var(--serif); font-size: 15.5px; font-weight: 600; }
+  .callout p { font-size: 14.5px; color: var(--muted); }
+
+  footer { border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; color: var(--faint); }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Road to 76 &middot; Day 1 of 7</div>
+    <h1>Quadratics &amp; Exponent Rules</h1>
+    <p class="standfirst">The highest-frequency object on the ALEKS test, worked from a labeled diagram, then drilled with problems you check yourself.</p>
+    <div class="progress">
+      <span class="done"></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </header>
+
+  <section>
+    <h2><span class="no">01</span> Read a parabola before you solve one</h2>
+    <p class="lede">Every quadratic question is really a question about this one shape. Know these four landmarks cold before touching the formula.</p>
+
+    <div class="card">
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 380 260" role="img" aria-label="Parabola y equals x squared minus 2x minus 3, with the roots at x equals negative 1 and x equals 3 marked, the vertex at (1, -4) marked, and the y-intercept at (0,-3) marked.">
+          <g stroke="var(--line)" stroke-width="1">
+            <line x1="20" y1="130" x2="360" y2="130"/>
+            <line x1="130" y1="20" x2="130" y2="250"/>
+          </g>
+          <path d="M 40 240 Q 130 -40 220 130 T 340 240" fill="none" stroke="var(--accent)" stroke-width="2.5"
+                transform="translate(0,0)"/>
+          <!-- actual parabola y = (x-1)^2 - 4 scaled: x-axis units 30px, y-axis units 22px, origin at (130,130) -->
+          <path d="M 40,238 C 70,150 100,90 130,64 C 160,90 190,150 220,238" fill="none" stroke="none"/>
+          <path fill="none" stroke="var(--accent)" stroke-width="2.5"
+                d="M 34,246
+                   C 58,190 80,140 100,108
+                   C 112,88 122,74 130,64
+                   C 138,74 148,88 160,108
+                   C 180,140 202,190 226,246"/>
+          <!-- roots -->
+          <circle cx="70" cy="130" r="4" fill="var(--ink)"/>
+          <circle cx="190" cy="130" r="4" fill="var(--ink)"/>
+          <text x="70" y="150" font-family="var(--mono)" font-size="11" fill="var(--ink)" text-anchor="middle">x=&minus;1</text>
+          <text x="190" y="150" font-family="var(--mono)" font-size="11" fill="var(--ink)" text-anchor="middle">x=3</text>
+          <!-- vertex -->
+          <circle cx="130" cy="196" r="4" fill="var(--gap)"/>
+          <text x="130" y="216" font-family="var(--mono)" font-size="11" fill="var(--gap)" text-anchor="middle">vertex (1, &minus;4)</text>
+          <!-- y intercept -->
+          <circle cx="130" cy="112" r="4" fill="var(--have)"/>
+          <text x="150" y="108" font-family="var(--mono)" font-size="11" fill="var(--have)">y-int (0, &minus;3)</text>
+          <text x="352" y="126" font-family="var(--mono)" font-size="11" fill="var(--faint)">x</text>
+          <text x="136" y="30" font-family="var(--mono)" font-size="11" fill="var(--faint)">y</text>
+        </svg>
+      </div>
+      <figcaption>y = x&sup2; &minus; 2x &minus; 3, plotted from the diagram at right</figcaption>
+
+      <div class="ref-split">
+        <div class="fx-list">
+          <div class="fx">roots: where the curve crosses the x-axis</div>
+          <div class="fx">vertex: the turning point, min or max</div>
+          <div class="fx">y-intercept: value at x = 0, i.e. "c"</div>
+          <div class="fx">discriminant sign tells you the root count</div>
+        </div>
+        <div class="fx-list">
+          <div class="fx">D &gt; 0 &nbsp;→&nbsp; 2 real roots (crosses twice)</div>
+          <div class="fx">D = 0 &nbsp;→&nbsp; 1 real root (touches once)</div>
+          <div class="fx">D &lt; 0 &nbsp;→&nbsp; 0 real roots (never crosses)</div>
+          <div class="fx">vertex x = &minus;b / 2a</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">02</span> Worked example — quadratic formula</h2>
+    <div class="card worked">
+      <p class="prob">Solve 2x&sup2; + 3x &minus; 5 = 0 for exact values of x.</p>
+      <div class="steps">
+        <div class="step">
+          <span class="n">1</span>
+          <div class="body">
+            <span class="math">a = 2, &nbsp; b = 3, &nbsp; c = &minus;5</span>
+            <span class="why">Read the coefficients straight off the standard form ax&sup2; + bx + c.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="n">2</span>
+          <div class="body">
+            <span class="math">D = b&sup2; &minus; 4ac = 9 &minus; 4(2)(&minus;5) = 9 + 40 = 49</span>
+            <span class="why">Compute the discriminant first — 49 is a perfect square, so you already know the roots will be rational.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="n">3</span>
+          <div class="body">
+            <span class="math">x = (&minus;b &plusmn; &radic;D) / 2a = (&minus;3 &plusmn; 7) / 4</span>
+            <span class="why">Plug straight into the formula. Keep the &plusmn; until the very last step.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="n">4</span>
+          <div class="body">
+            <span class="math">x = 4/4 = 1 &nbsp; or &nbsp; x = &minus;10/4 = &minus;5/2</span>
+            <span class="why">Split into the two branches and simplify each fraction fully — ALEKS wants reduced form.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">03</span> Worked example — completing the square</h2>
+    <div class="card worked">
+      <p class="prob">Solve x&sup2; + 6x + 4 = 0 by completing the square.</p>
+      <div class="steps">
+        <div class="step">
+          <span class="n">1</span>
+          <div class="body">
+            <span class="math">x&sup2; + 6x = &minus;4</span>
+            <span class="why">Move the constant to the other side first.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="n">2</span>
+          <div class="body">
+            <span class="math">half of 6 is 3, &nbsp; 3&sup2; = 9</span>
+            <span class="why">Take half the x-coefficient and square it — that's the number that completes the square.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="n">3</span>
+          <div class="body">
+            <span class="math">x&sup2; + 6x + 9 = &minus;4 + 9</span>
+            <span class="why">Add it to both sides to keep the equation balanced.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="n">4</span>
+          <div class="body">
+            <span class="math">(x + 3)&sup2; = 5</span>
+            <span class="why">The left side is now a perfect square binomial by construction.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="n">5</span>
+          <div class="body">
+            <span class="math">x + 3 = &plusmn;&radic;5 &nbsp;→&nbsp; x = &minus;3 &plusmn; &radic;5</span>
+            <span class="why">Square-root both sides, don't forget &plusmn;, then isolate x.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">04</span> Exponent rules — the six you'll actually be tested on</h2>
+    <div class="card">
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>rule</th><th>form</th><th>example</th></tr></thead>
+          <tbody>
+            <tr><td>product</td><td>a<sup>m</sup>&middot;a<sup>n</sup> = a<sup>m+n</sup></td><td>x&sup3;&middot;x&sup2; = x&#8309;</td></tr>
+            <tr><td>quotient</td><td>a<sup>m</sup>/a<sup>n</sup> = a<sup>m&minus;n</sup></td><td>x&#8309;/x&sup2; = x&sup3;</td></tr>
+            <tr><td>power of a power</td><td>(a<sup>m</sup>)<sup>n</sup> = a<sup>mn</sup></td><td>(x&sup2;)&sup3; = x&#8310;</td></tr>
+            <tr><td>negative exponent</td><td>a<sup>&minus;n</sup> = 1/a<sup>n</sup></td><td>x&minus;&sup2; = 1/x&sup2;</td></tr>
+            <tr><td>zero exponent</td><td>a&#8304; = 1 &nbsp;(a &ne; 0)</td><td>7&#8304; = 1</td></tr>
+            <tr><td>fractional exponent</td><td>a<sup>m/n</sup> = &#8319;&radic;(a<sup>m</sup>)</td><td>x<sup>2/3</sup> = &sup3;&radic;(x&sup2;)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="lede">The trap ALEKS sets: an expression with a negative exponent buried inside a power of a power, e.g. (2x&#8315;&sup3;y&sup2;)&#8315;&sup2;. Work from the inside out, one rule at a time — never try to do two rules in one mental step.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">05</span> Practice — check yourself honestly</h2>
+    <p class="lede">Work each on paper before opening the answer. If you open it first, you're not practicing, you're reading.</p>
+
+    <div class="practice-set">
+      <div class="pq">
+        <p class="q">1. Solve using the quadratic formula: 3x&sup2; &minus; 5x &minus; 2 = 0</p>
+        <details>
+          <summary>Show answer</summary>
+          <div class="answer">D = 25 + 24 = 49 &nbsp;→&nbsp; x = (5 &plusmn; 7)/6 &nbsp;→&nbsp; x = 2 &nbsp;or&nbsp; x = &minus;1/3</div>
+        </details>
+      </div>
+      <div class="pq">
+        <p class="q">2. Solve by completing the square: x&sup2; &minus; 4x &minus; 1 = 0</p>
+        <details>
+          <summary>Show answer</summary>
+          <div class="answer">x&sup2; &minus; 4x + 4 = 1 + 4 &nbsp;→&nbsp; (x&minus;2)&sup2; = 5 &nbsp;→&nbsp; x = 2 &plusmn; &radic;5</div>
+        </details>
+      </div>
+      <div class="pq">
+        <p class="q">3. Without solving, use the discriminant to state how many real roots x&sup2; + 2x + 5 = 0 has.</p>
+        <details>
+          <summary>Show answer</summary>
+          <div class="answer">D = 4 &minus; 20 = &minus;16, D &lt; 0 &nbsp;→&nbsp; zero real roots</div>
+        </details>
+      </div>
+      <div class="pq">
+        <p class="q">4. Find the vertex of y = x&sup2; &minus; 6x + 5.</p>
+        <details>
+          <summary>Show answer</summary>
+          <div class="answer">x = &minus;b/2a = 6/2 = 3, &nbsp; y = 9 &minus; 18 + 5 = &minus;4 &nbsp;→&nbsp; vertex (3, &minus;4)</div>
+        </details>
+      </div>
+      <div class="pq">
+        <p class="q">5. Simplify: (3x&#8315;&sup2;y&sup3;)&sup2; &middot; x&#8309;</p>
+        <details>
+          <summary>Show answer</summary>
+          <div class="answer">(3x&#8315;&sup2;y&sup3;)&sup2; = 9x&#8315;&#8308;y&#8310; &nbsp;→&nbsp; &middot;x&#8309; = 9x&sup2;y&#8310;</div>
+        </details>
+      </div>
+      <div class="pq">
+        <p class="q">6. Simplify: (2a&#8309;b&#8315;&sup2;) / (8a&sup2;b&#8315;&#8309;)</p>
+        <details>
+          <summary>Show answer</summary>
+          <div class="answer">= (1/4) &middot; a&#8309;&#8315;&sup2; &middot; b&#8315;&sup2;&#8315;(&#8315;&#8309;) = (1/4)a&sup3;b&#8309; = a&sup3;b&#8309;/4</div>
+        </details>
+      </div>
+      <div class="pq">
+        <p class="q">7. A quadratic word problem: a ball's height is h(t) = &minus;16t&sup2; + 48t. At what time(s) does it hit the ground (h = 0)?</p>
+        <details>
+          <summary>Show answer</summary>
+          <div class="answer">&minus;16t&sup2; + 48t = 0 &nbsp;→&nbsp; &minus;16t(t &minus; 3) = 0 &nbsp;→&nbsp; t = 0 or t = 3 seconds</div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <div class="callout">
+    <h3>Before you close this</h3>
+    <p>You should be able to look at any quadratic and immediately state its discriminant sign without finishing the solve — that instinct alone answers a chunk of ALEKS questions faster than full computation. If problems 1–4 above took more than 3 minutes each, repeat this section tomorrow morning before moving to Day 2.</p>
+  </div>
+
+  <footer>Road to 76 &middot; Day 1 of 7 &middot; next: Day 2 — rational expressions and radicals</footer>
+
+</div>
