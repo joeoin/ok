@@ -1,0 +1,44 @@
+# One metro per line. ~35 agencies per metro on average, so ~35 metros gets you near 1,000.
+# Trim or extend to match the states you can actually service.
+Phoenix, AZ
+Mesa, AZ
+Tucson, AZ
+Scottsdale, AZ
+Chandler, AZ
+Gilbert, AZ
+Glendale, AZ
+Peoria, AZ
+Surprise, AZ
+Salt Lake City, UT
+Provo, UT
+Ogden, UT
+St George, UT
+Boise, ID
+Meridian, ID
+Idaho Falls, ID
+Cheyenne, WY
+Casper, WY
+Las Vegas, NV
+Henderson, NV
+Reno, NV
+Denver, CO
+Colorado Springs, CO
+Aurora, CO
+Albuquerque, NM
+El Paso, TX
+Austin, TX
+San Antonio, TX
+Dallas, TX
+Fort Worth, TX
+Houston, TX
+Oklahoma City, OK
+Tulsa, OK
+Kansas City, MO
+Omaha, NE
+Wichita, KS
+Portland, OR
+Seattle, WA
+Spokane, WA
+Sacramento, CA
+Fresno, CA
+Bakersfield, CA

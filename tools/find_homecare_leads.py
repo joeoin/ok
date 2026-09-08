@@ -1,27 +1,38 @@
 #!/usr/bin/env python3
 """
-Home care agency lead scraper.
+Home care agency prospect scraper.
 
 Pulls home care agencies off Google Maps, then visits each agency's own site to
-find the owner's name, public emails, and — the part that matters — whether the
-site is carrying a Meta Pixel or a Google Ads conversion tag. A live pixel is a
-reliable "this agency buys traffic" signal and it does not require the Meta Ad
-Library, which is hostile to scraping and rate-limits hard.
+find the owner's name, public emails, and two intent signals:
 
-Output is a CSV you can sort by runs_ads and work top-down.
+  hiring   — a careers page, "now hiring" copy, or a recruiting ATS embedded on
+             the site (CareerPlug, Workstream, Apploi, JazzHR, Indeed widgets).
+             This is the signal that matters for a caregiver recruiting offer:
+             they are trying to staff right now.
+  runs_ads — a live Meta Pixel or Google Ads conversion tag, meaning they
+             already buy traffic and have a budget line for acquisition.
+
+Both beat the Meta Ad Library, which rate-limits scraping hard.
+
+Output is a CSV. Sort by hiring first, runs_ads second — an agency doing both is
+spending money on acquisition AND cannot staff its cases.
 
 Requirements:
     pip install requests beautifulsoup4 playwright
     playwright install chromium --with-deps
 
 Usage:
-    python tools/find_homecare_leads.py --cities "Phoenix, AZ" "Mesa, AZ" "Tucson, AZ"
-    python tools/find_homecare_leads.py --cities "Phoenix, AZ" --query "in home care" --max 40
-    python tools/find_homecare_leads.py --cities "Phoenix, AZ" --out leads.csv
+    # ~1,000 prospects: 42 metros x 25 each. Takes a few hours; resume if it dies.
+    python tools/find_homecare_leads.py --cities-file tools/metros.txt --max 25
+    python tools/find_homecare_leads.py --cities-file tools/metros.txt --max 25 --resume
+
+    # Single market
+    python tools/find_homecare_leads.py --cities "Phoenix, AZ" --max 40
 """
 
 import argparse
 import csv
+import os
 import re
 import sys
 import time
@@ -38,9 +49,29 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 
 # Pages most likely to name the owner and publish a real address.
 SUBPAGES = ["", "/about", "/about-us", "/our-team", "/team", "/contact",
-            "/contact-us", "/meet-our-owner", "/our-story", "/leadership"]
+            "/contact-us", "/meet-our-owner", "/our-story", "/leadership",
+            "/careers", "/jobs", "/employment", "/apply", "/join-our-team",
+            "/caregiver-jobs", "/now-hiring"]
 
-TITLE_WORDS = r"(owner|founder|co-founder|president|ceo|administrator|executive director|managing director)"
+# Recruiting stacks common in home care. CareerPlug in particular is near-ubiquitous.
+ATS_PATTERNS = [
+    ("careerplug", r"careerplug"), ("workstream", r"workstream\.is|workstream\.us"),
+    ("apploi", r"apploi"), ("jazzhr", r"jazzhr|applytojob"),
+    ("bamboohr", r"bamboohr"), ("paradox", r"paradox\.ai|olivia\.paradox"),
+    ("indeed-widget", r"indeed\.com/(cmp|jobs|hire)|indeedassessments"),
+    ("ziprecruiter", r"ziprecruiter"), ("hireology", r"hireology"),
+    ("wellsky", r"wellsky"), ("axiscare", r"axiscare"), ("clearcare", r"clearcare"),
+]
+
+HIRING_COPY = re.compile(
+    r"now hiring|we'?re hiring|join our team|apply now|caregiver jobs|"
+    r"hiring caregivers|become a caregiver|open positions|current openings|"
+    r"employment opportunities", re.I)
+
+# Scoped (?i:...) so the titles match any casing while the name pattern beside
+# them keeps relying on real capitalization to avoid matching sentence text.
+TITLE_WORDS = (r"((?i:owner|founder|co-founder|president|ceo|administrator|"
+               r"executive director|managing director|director of operations))")
 
 # Junk that shows up in mailto scrapes and is never a person.
 EMAIL_JUNK = re.compile(
@@ -135,7 +166,8 @@ def fetch(url, timeout=20):
 
 def profile_site(site):
     """Crawl a few pages of one agency site for ad tags, emails, and an owner name."""
-    info = {"runs_ads": "", "ad_tech": "", "emails": "", "owner": "", "owner_title": ""}
+    info = {"runs_ads": "", "ad_tech": "", "hiring": "", "hiring_signal": "",
+            "emails": "", "owner": "", "owner_title": ""}
     if not site:
         return info
 
@@ -171,6 +203,14 @@ def profile_site(site):
             tags.append(extra)
 
     info["ad_tech"] = "; ".join(tags)
+
+    # Hiring intent: an ATS on the page is strong, careers copy alone is weaker.
+    hire = [name for name, pat in ATS_PATTERNS if re.search(pat, html_all, re.I)]
+    copy_hits = HIRING_COPY.findall(html_all)
+    if copy_hits:
+        hire.append(f"copy:{copy_hits[0].lower().strip()}")
+    info["hiring_signal"] = "; ".join(hire)
+    info["hiring"] = "YES" if hire else ""
     # Pixel or an AW- conversion tag means they are actively buying traffic.
     info["runs_ads"] = "YES" if ("meta-pixel" in tags or any(t.startswith("google-ads") for t in tags)) else ""
 
@@ -195,46 +235,86 @@ def profile_site(site):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cities", nargs="+", required=True,
-                    help='e.g. --cities "Phoenix, AZ" "Mesa, AZ"')
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--cities", nargs="+", help='e.g. --cities "Phoenix, AZ" "Mesa, AZ"')
+    src.add_argument("--cities-file", help="one metro per line; # comments ignored")
     ap.add_argument("--query", default="home care agency")
     ap.add_argument("--max", type=int, default=25, help="results per city")
     ap.add_argument("--out", default="homecare_leads.csv")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip agencies already profiled in --out")
     ap.add_argument("--show-browser", action="store_true")
     args = ap.parse_args()
 
+    if args.cities_file:
+        with open(args.cities_file) as f:
+            cities = [ln.strip() for ln in f
+                      if ln.strip() and not ln.startswith("#")]
+    else:
+        cities = args.cities
+
+    cols = ["agency", "owner", "owner_title", "emails", "phone", "website",
+            "hiring", "hiring_signal", "runs_ads", "ad_tech", "address", "city"]
+
+    # Resume: remember what a previous run already profiled.
+    done, existing = set(), []
+    if args.resume and os.path.exists(args.out):
+        with open(args.out, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                existing.append(row)
+                key = urlparse(row["website"]).netloc.lower() if row.get("website") else row["agency"].lower()
+                done.add(key)
+        print(f"[resume] {len(done)} agencies already profiled in {args.out}")
+
     rows = []
-    for city in args.cities:
+    for city in cities:
         print(f"[maps] {args.query} in {city} ...", flush=True)
-        found = maps_search(args.query, city, args.max, headless=not args.show_browser)
+        try:
+            found = maps_search(args.query, city, args.max, headless=not args.show_browser)
+        except Exception as e:
+            print(f"       failed ({e}) — moving on", flush=True)
+            continue
         print(f"       {len(found)} agencies", flush=True)
         rows.extend(found)
 
     # De-dupe on domain, falling back to agency name.
-    seen, deduped = set(), []
+    seen, queue = set(done), []
     for r in rows:
         key = urlparse(r["website"]).netloc.lower() if r["website"] else r["agency"].lower()
         if key and key not in seen:
             seen.add(key)
-            deduped.append(r)
+            queue.append(r)
 
-    print(f"\n[sites] profiling {len(deduped)} unique agencies ...", flush=True)
-    for i, r in enumerate(deduped, 1):
-        r.update(profile_site(r["website"]))
-        flag = "ADS" if r["runs_ads"] else "   "
-        print(f"  {i:>3}/{len(deduped)} [{flag}] {r['agency'][:44]:<44} {r['owner'] or '-'}", flush=True)
+    print(f"\n[sites] profiling {len(queue)} new agencies ...", flush=True)
 
-    cols = ["agency", "owner", "owner_title", "emails", "phone", "website",
-            "runs_ads", "ad_tech", "address", "city"]
-    with open(args.out, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(deduped)
+    def flush_csv(batch):
+        with open(args.out, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(existing + batch)
 
-    advertisers = sum(1 for r in deduped if r["runs_ads"])
-    named = sum(1 for r in deduped if r["owner"])
-    print(f"\nWrote {args.out} — {len(deduped)} agencies, {advertisers} running ads, {named} with an owner name.")
-    print("Sort by runs_ads. Those are the ones already spending money on leads.")
+    for i, r in enumerate(queue, 1):
+        try:
+            r.update(profile_site(r["website"]))
+        except Exception:
+            pass
+        flags = ("HIRE" if r.get("hiring") else "    ") + ("/ADS" if r.get("runs_ads") else "    ")
+        print(f"  {i:>4}/{len(queue)} [{flags}] {r['agency'][:42]:<42} {r.get('owner') or '-'}", flush=True)
+        if i % 10 == 0:
+            flush_csv(queue[:i])  # checkpoint so a crash costs 10 rows, not the run
+
+    flush_csv(queue)
+    allrows = existing + queue
+    hiring = sum(1 for r in allrows if r.get("hiring"))
+    ads = sum(1 for r in allrows if r.get("runs_ads"))
+    both = sum(1 for r in allrows if r.get("hiring") and r.get("runs_ads"))
+    named = sum(1 for r in allrows if r.get("owner"))
+    emailed = sum(1 for r in allrows if r.get("emails"))
+
+    print(f"\nWrote {args.out} — {len(allrows)} agencies")
+    print(f"  {hiring} actively hiring, {ads} running ads, {both} doing both")
+    print(f"  {named} with an owner name, {emailed} with at least one email")
+    print("\nWork the 'both' rows first: they have an acquisition budget AND cannot staff their cases.")
 
 
 if __name__ == "__main__":
